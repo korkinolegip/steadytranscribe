@@ -18,6 +18,28 @@ jobs:
         with:
           python-version: "3.12"
 
+      # ЗАЩИТА ЦЕПОЧКИ ОБНОВЛЕНИЙ: версии везде совпадают, контракты не тронуты.
+      # Иначе сборка не выпустится — обновления у пользователей не сломаются.
+      - name: Контроль версий и контрактов автообновления
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PY=$(grep -oP 'CURRENT_VERSION = "\K[0-9.]+' src/steadytranscribe/ui/updater.py)
+          ISS=$(grep -oP '#define AppVersion "\K[0-9.]+' packaging/installer.iss)
+          VI=$(grep -oP "StringStruct\('ProductVersion', '\K[0-9.]+" packaging/version_info.txt)
+          echo "tag=$TAG updater=$PY iss=$ISS version_info=$VI"
+          [ "$TAG" = "$PY" ] && [ "$TAG" = "$ISS" ] && [ "$TAG" = "$VI" ] || {
+            echo "::error::Версии не совпадают — обновление у пользователей сломается"; exit 1; }
+          # контракты (менять НЕЛЬЗЯ — сломаются обновления у всех установленных копий)
+          grep -q '7E6B4A2D-9C31-4F5E-8D2A-4C7F1B9E3A60' packaging/installer.iss || {
+            echo "::error::Изменён AppId — старые установки перестанут обновляться"; exit 1; }
+          grep -q 'DefaultDirName={localappdata}\\Programs' packaging/installer.iss || {
+            echo "::error::Изменена папка установки — сломает обновления"; exit 1; }
+          grep -q 'PrivilegesRequired=lowest' packaging/installer.iss || {
+            echo "::error::Убран per-user режим — обновления потребуют UAC"; exit 1; }
+          echo "Контракты в порядке"
+
       - name: Lint — критичные ошибки (дубликаты функций, неопределённые имена)
         shell: bash
         run: |

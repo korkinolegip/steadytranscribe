@@ -155,6 +155,10 @@ class MainWindow(QMainWindow):
         from ..storage import settings as settings_store
         checker = updater.UpdateChecker(self)
         auto = settings_store.load().get("auto_update", True)
+        # тихое обновление дважды сорвалось? — переходим на ВИДИМЫЙ диалог:
+        # пользователь увидит ошибку и сможет обновиться кнопкой (внутри программы)
+        if updater.consume_update_failed():
+            auto = False
         if auto:
             checker.update_available.connect(self._on_update_found)
         else:

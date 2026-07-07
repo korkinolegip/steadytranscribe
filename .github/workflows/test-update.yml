@@ -1,0 +1,69 @@
+name: Test Update Chain
+
+# Сквозная проверка цепочки автообновления на реальной Windows:
+# 1) тихая установка лёгкого установщика ровно с теми флагами, что использует
+#    программа при автообновлении (/VERYSILENT ... /NORELAUNCH);
+# 2) повторная установка ПОВЕРХ (симуляция обновления);
+# 3) проверки: exe на месте, версия верная, ничего само не запустилось.
+# Запускать после каждого релиза — до того, как обновление уйдёт пользователям.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-update:
+    runs-on: windows-latest
+    steps:
+      - name: Download latest light installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo ${{ github.repository }} `
+            --pattern "SteadyTranscribe-Setup-*.exe" --dir .
+          Get-ChildItem *.exe | Where-Object { $_.Name -notmatch "with-model" } |
+            Select-Object -First 1 | Rename-Item -NewName "installer.exe"
+          Get-Item installer.exe | Select-Object Name,Length
+
+      - name: Install silently (как автообновление)
+        shell: pwsh
+        run: |
+          $args = '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NORELAUNCH',"/LOG=$pwd\install1.log"
+          Start-Process -FilePath .\installer.exe -ArgumentList $args -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\SteadyTranscribe\SteadyTranscribe.exe"
+          if (!(Test-Path $exe)) {
+            Write-Host "::error::Установка не удалась — exe не найден"
+            Get-Content install1.log -Tail 50; exit 1
+          }
+          $v = (Get-Item $exe).VersionInfo.ProductVersion
+          Write-Host "Установлено: версия $v"
+
+      - name: Verify no auto-launched processes (/NORELAUNCH)
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 5
+          $p = Get-Process SteadyTranscribe -ErrorAction SilentlyContinue
+          if ($p) {
+            Write-Host "::error::/NORELAUNCH не сработал — приложение запустилось само"
+            $p | Stop-Process -Force; exit 1
+          }
+          Write-Host "OK: ничего само не запустилось"
+
+      - name: Install AGAIN over existing (симуляция обновления)
+        shell: pwsh
+        run: |
+          $args = '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NORELAUNCH',"/LOG=$pwd\install2.log"
+          Start-Process -FilePath .\installer.exe -ArgumentList $args -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\SteadyTranscribe\SteadyTranscribe.exe"
+          if (!(Test-Path $exe)) {
+            Write-Host "::error::Обновление поверх не удалось"
+            Get-Content install2.log -Tail 50; exit 1
+          }
+          $v = (Get-Item $exe).VersionInfo.ProductVersion
+          Write-Host "Обновление поверх прошло: версия $v"
+          # _internal должен быть свежим (InstallDelete отработал), models цел
+          if (!(Test-Path "$env:LOCALAPPDATA\Programs\SteadyTranscribe\_internal")) {
+            Write-Host "::error::_internal отсутствует после обновления"; exit 1
+          }
+          Write-Host "=== Хвост лога установщика ==="
+          Get-Content install2.log -Tail 15

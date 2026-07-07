@@ -129,10 +129,37 @@ def apply_staged_at_launch() -> bool:
     if stale or int(p.get("attempts", 0)) >= 2:
         logging.info("update: отложенное %s сброшено (stale=%s, попыток=%s)",
                      p.get("version"), stale, p.get("attempts"))
+        if not stale:
+            # две НЕУДАЧНЫЕ попытки — не уходим в тихий цикл: пометим, чтобы
+            # показать пользователю видимый диалог обновления с текстом ошибки
+            mark_update_failed()
         clear_pending()   # уже применилось / файла нет / две неудачные попытки
         return False
     logging.info("update: применяю отложенное %s при запуске", p.get("version"))
     return install_pending(relaunch=True)
+
+
+# маркер «автообновление дважды не удалось» → показать видимый диалог
+def _fail_flag_path() -> str:
+    return os.path.join(app_data_dir(), "update_failed")
+
+
+def mark_update_failed() -> None:
+    try:
+        with open(_fail_flag_path(), "w", encoding="utf-8") as f:
+            f.write("1")
+    except OSError:
+        pass
+
+
+def consume_update_failed() -> bool:
+    if os.path.exists(_fail_flag_path()):
+        try:
+            os.remove(_fail_flag_path())
+        except OSError:
+            pass
+        return True
+    return False
 
 
 # маркер «после обновления на простое вернуться свёрнутым, не красть фокус»
@@ -201,6 +228,7 @@ class InstallerDownloader(QThread):
         self._cancel = True
 
     def run(self):
+        import logging
         try:
             dest = os.path.join(_updates_dir(), "SteadyTranscribe-Update.exe")
             req = urllib.request.Request(self.url, headers={"User-Agent": "SteadyTranscribe"})
@@ -217,10 +245,16 @@ class InstallerDownloader(QThread):
                         f.write(chunk)
                         got += len(chunk)
                         self.progress.emit(got, total)
+            # ЦЕЛОСТНОСТЬ: оборванное скачивание не должно попасть в установку —
+            # неполный установщик либо молча сломается, либо покажет непонятную ошибку
+            if total and got != total:
+                raise OSError(f"скачано {got} из {total} байт — обрыв сети")
+            logging.info("update: установщик скачан целиком (%s байт): %s", got, dest)
             self.done.emit(dest)
         except InterruptedError:
             self.failed.emit("Обновление отменено.")
         except Exception as e:  # noqa: BLE001
+            logging.error("update: скачивание не удалось: %s", e)
             self.failed.emit(f"Не удалось скачать обновление: {e}")
 
 
