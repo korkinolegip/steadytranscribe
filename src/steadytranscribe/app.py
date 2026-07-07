@@ -76,10 +76,26 @@ def _selftest(audio_path: str) -> int:
     return 0
 
 
+def _run_diarize(wav_path: str, num_speakers: int) -> int:
+    """Диаризация в ОТДЕЛЬНОМ процессе — интерфейс не зависает.
+    Печатает прогресс (PROGRESS доля) и результат (RESULT json)."""
+    import json
+    from .core import diarize
+    turns = diarize.diarize(
+        wav_path, num_speakers,
+        status_cb=lambda s, p: print(f"PROGRESS {p:.3f}", flush=True),
+        cancel_check=lambda: False)
+    print("RESULT " + json.dumps([[t.speaker, t.start, t.end] for t in turns]), flush=True)
+    return 0
+
+
 def main():
     if "--selftest" in sys.argv:
         idx = sys.argv.index("--selftest")
         sys.exit(_selftest(sys.argv[idx + 1]))
+    if "--diarize" in sys.argv:
+        idx = sys.argv.index("--diarize")
+        sys.exit(_run_diarize(sys.argv[idx + 1], int(sys.argv[idx + 2])))
 
     from PySide6.QtWidgets import QApplication, QMessageBox
     log_path = _setup_logging()

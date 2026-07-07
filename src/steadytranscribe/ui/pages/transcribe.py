@@ -39,15 +39,17 @@ class SpeakerCountDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Разделить по собеседникам")
         lay = QVBoxLayout(self)
-        hint = QLabel("Укажите, сколько человек говорит на записи —\n"
-                      "так разделение будет точнее.")
+        hint = QLabel("Укажите точное число людей, которые говорят на записи.\n"
+                      "Это важно: программа узнаёт голоса по тембру, и с точным числом "
+                      "разделение получается корректным.")
         hint.setObjectName("hint")
+        hint.setWordWrap(True)
         lay.addWidget(hint)
         self.box = QComboBox()
-        self.box.addItem("Определить автоматически", 0)
-        for n in range(2, 9):
-            self.box.addItem(f"{n}", n)
-        self.box.setCurrentIndex(1)  # чаще всего известно: 2
+        for n in range(2, 11):
+            self.box.addItem(f"{n} человека" if n < 5 else f"{n} человек", n)
+        self.box.addItem("Не знаю — определить автоматически (менее точно)", 0)
+        self.box.setCurrentIndex(0)  # по умолчанию 2 — самый частый случай
         form = QFormLayout()
         form.addRow("Собеседников:", self.box)
         lay.addLayout(form)

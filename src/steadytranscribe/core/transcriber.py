@@ -85,10 +85,15 @@ class Transcriber:
         # а попытка использовать видеокарту вызывает мгновенный крах.
         # Ускорение обеспечивает AVX2 на процессоре.
         import logging
-        logging.info("transcribe: движок на CPU (device игнорируется: %s)", device)
+        # Оптимум потоков: примерно половина логических ядер (обычно = физические),
+        # с потолком 8. Больше ядер не всегда быстрее (перегрузка планировщика).
+        threads = min(max((os.cpu_count() or 4) // 2, 4), 8)
+        logging.info("transcribe: движок на CPU, потоков=%s (device игнорируется: %s)",
+                     threads, device)
         try:
             self._model = WhisperModel(model_store.model_dir(model_name),
-                                       device="cpu", compute_type="int8")
+                                       device="cpu", compute_type="int8",
+                                       cpu_threads=threads)
             self._model_key = key
             return self._model
         except Exception as e:  # noqa: BLE001
@@ -113,11 +118,20 @@ class Transcriber:
 
         lang = None if language == "auto" else language
         p_lo, p_hi = progress_range
+        # ВАЖНО: словарь-подсказку оформляем как полное предложение с точкой.
+        # Список слов через запятую без точки сбивает пунктуацию всего текста —
+        # Whisper имитирует стиль подсказки и перестаёт ставить точки.
+        prompt = None
+        if initial_prompt and initial_prompt.strip():
+            words = ", ".join(w.strip() for w in initial_prompt.replace("\n", ",").split(",")
+                              if w.strip())
+            if words:
+                prompt = f"В записи упоминаются такие слова и названия: {words}."
         start = time.monotonic()
         segments, info = whisper.transcribe(
             wav_path,
             language=lang,
-            initial_prompt=initial_prompt or None,
+            initial_prompt=prompt,
             vad_filter=True,
             # защита от зацикливания на повторах (известная особенность Whisper)
             condition_on_previous_text=False,

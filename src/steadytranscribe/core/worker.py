@@ -72,16 +72,40 @@ class DiarizationWorker(QThread):
         self._cancelled = True
 
     def run(self):
+        """Диаризация в ОТДЕЛЬНОМ ПРОЦЕССЕ — интерфейс не зависает (нативная
+        библиотека иначе держит GIL и морозит окно)."""
+        import json
+        import subprocess
+        import sys
         try:
-            turns = diarize.diarize(
-                self._wav, self._num,
-                status_cb=lambda s, p: self.progress.emit(s, p),
-                cancel_check=lambda: self._cancelled)
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable, "--diarize", self._wav, str(self._num)]
+            else:
+                cmd = [sys.executable, "-m", "steadytranscribe.app",
+                       "--diarize", self._wav, str(self._num)]
+            env = dict(os.environ, PYTHONPATH="src")
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", env=env,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            turns_raw = None
+            for line in proc.stdout:
+                if self._cancelled:
+                    proc.terminate()
+                    self.failed.emit("Отменено пользователем.")
+                    return
+                line = line.strip()
+                if line.startswith("PROGRESS "):
+                    self.progress.emit("Определение собеседников…", float(line[9:]))
+                elif line.startswith("RESULT "):
+                    turns_raw = json.loads(line[7:])
+            proc.wait()
+            if turns_raw is None:
+                raise RuntimeError("не удалось выполнить разделение")
+            turns = [diarize.SpeakerTurn(sp, st, en) for sp, st, en in turns_raw]
             dialogue = diarize.build_dialogue(self._words, turns)
             if not dialogue.strip():
                 raise RuntimeError("Не удалось разделить запись на собеседников.")
             self.finished_ok.emit(dialogue)
-        except InterruptedError:
-            self.failed.emit("Отменено пользователем.")
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Ошибка разделения: {e}")

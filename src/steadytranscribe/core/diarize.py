@@ -38,12 +38,14 @@ def diarize(wav_path: str, num_speakers: int, status_cb, cancel_check) -> list[S
     status_cb("Определение собеседников…", 0.25)
     audio, _sr = sf.read(wav_path, dtype="float32")
     d = _models_dir()
+    nthreads = max(os.cpu_count() or 4, 2)  # все ядра — ускоряет медленную диаризацию
     config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
         segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
             pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-                model=os.path.join(d, "segmentation.onnx"))),
+                model=os.path.join(d, "segmentation.onnx")),
+            num_threads=nthreads),
         embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
-            model=os.path.join(d, "embedding.onnx")),
+            model=os.path.join(d, "embedding.onnx"), num_threads=nthreads),
         clustering=sherpa_onnx.FastClusteringConfig(
             num_clusters=num_speakers if num_speakers > 0 else -1,
             threshold=0.8),
