@@ -2,8 +2,15 @@
 import faulthandler
 import logging
 import os
+import platform
 import sys
 import traceback
+
+# Максимальная совместимость с процессором: заставляем движок распознавания
+# использовать безопасный набор инструкций. Без этого на процессорах без AVX2
+# приложение падало молча (нативный крах при первом же распознавании).
+os.environ.setdefault("CT2_FORCE_CPU_ISA", "GENERIC")
+os.environ.setdefault("CT2_USE_MKL", "0")
 
 from .storage.settings import app_data_dir
 
@@ -55,6 +62,13 @@ def main():
     from PySide6.QtWidgets import QApplication, QMessageBox
     log_path = _setup_logging()
     logging.info("=== SteadyTranscribe запуск ===")
+    try:
+        import multiprocessing
+        logging.info("CPU=%s cores=%s ISA=%s OS=%s",
+                     platform.processor(), multiprocessing.cpu_count(),
+                     os.environ.get("CT2_FORCE_CPU_ISA"), platform.platform())
+    except Exception:  # noqa: BLE001
+        pass
 
     app = QApplication(sys.argv)
     app.setApplicationName("SteadyTranscribe")

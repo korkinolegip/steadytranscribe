@@ -101,7 +101,10 @@ class Transcriber:
         word_timestamps=True — вернуть также слова с таймкодами (для диаризации).
         progress_range — куда мапить прогресс распознавания на общей шкале.
         """
+        import logging
+        logging.info("transcribe: загрузка модели %s (%s)", model, device)
         whisper = self._load_model(model, device, status_cb)
+        logging.info("transcribe: модель загружена, старт распознавания")
         status_cb("Анализ файла…", 0.2)
 
         lang = None if language == "auto" else language
@@ -116,6 +119,7 @@ class Transcriber:
             condition_on_previous_text=False,
             word_timestamps=word_timestamps,
         )
+        logging.info("transcribe: VAD пройден, идёт распознавание сегментов")
         duration = float(info.duration or 0.0)
 
         parts: list[str] = []
