@@ -18,11 +18,10 @@ class SpeakerTurn:
 
 
 def _models_dir() -> str:
+    from .resources import resource
     if getattr(sys, "frozen", False):
-        base = os.path.join(os.path.dirname(sys.executable), "diarization")
-    else:
-        base = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets", "diarization")
-    return os.path.abspath(base)
+        return resource("diarization")
+    return resource("assets", "diarization")
 
 
 def is_available() -> bool:

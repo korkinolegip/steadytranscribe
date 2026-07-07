@@ -9,16 +9,13 @@ from PySide6.QtWidgets import (
     QMessageBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 
+from ..core.resources import resource
 from ..core.transcriber import Transcriber
 from . import updater
 
 
 def _asset(name: str) -> str:
-    if getattr(sys, "frozen", False):
-        base = os.path.join(os.path.dirname(sys.executable), "assets")
-    else:
-        base = os.path.join(os.path.dirname(__file__), "..", "..", "..", "assets")
-    return os.path.abspath(os.path.join(base, name))
+    return resource("assets", name)
 from .pages.history_page import HistoryPage
 from .pages.models import ModelsPage
 from .pages.settings_page import SettingsPage

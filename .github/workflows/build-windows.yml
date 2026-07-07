@@ -39,6 +39,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist/SteadyTranscribe/ffmpeg | Out-Null
           Copy-Item dist-ffmpeg/* dist/SteadyTranscribe/ffmpeg/
+          # модели диаризации кладём рядом (путь diarization/ ожидает приложение)
+          New-Item -ItemType Directory -Force -Path dist/SteadyTranscribe/diarization | Out-Null
+          Copy-Item assets/diarization/* dist/SteadyTranscribe/diarization/
 
       - name: Build installer (Inno Setup)
         shell: pwsh

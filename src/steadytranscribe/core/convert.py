@@ -17,9 +17,10 @@ class ConvertError(Exception):
 
 
 def ffmpeg_path() -> str:
-    """ffmpeg: рядом с приложением (PyInstaller) или из PATH."""
+    """ffmpeg: вшитый в сборку или из PATH."""
     if getattr(sys, "frozen", False):
-        bundled = os.path.join(os.path.dirname(sys.executable), "ffmpeg", "ffmpeg.exe")
+        from .resources import resource
+        bundled = resource("ffmpeg", "ffmpeg.exe")
         if os.path.exists(bundled):
             return bundled
     return "ffmpeg"
@@ -32,7 +33,8 @@ def is_supported(path: str) -> bool:
 
 def probe_duration(path: str) -> float:
     """Длительность файла в секундах (0 при неудаче) — как fallback в оригинале."""
-    exe = ffmpeg_path().replace("ffmpeg", "ffprobe", 1) if "ffmpeg" in ffmpeg_path() else "ffprobe"
+    fp = ffmpeg_path()
+    exe = fp.replace("ffmpeg", "ffprobe") if "ffmpeg" in fp else "ffprobe"
     try:
         out = subprocess.run(
             [exe, "-v", "quiet", "-show_entries", "format=duration",
