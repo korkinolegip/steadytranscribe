@@ -11,7 +11,6 @@ DEFAULTS = {
     "history_limit": 50,          # как maxEntries в оригинале
     "hf_mirror": "auto",          # auto: huggingface.co → fallback hf-mirror.com
     "onboarded": False,           # мини-обучение при первом запуске показано
-    "load_mode": "background",     # background = не мешать другим программам; fast = максимум скорости
 }
 
 MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3-turbo"]

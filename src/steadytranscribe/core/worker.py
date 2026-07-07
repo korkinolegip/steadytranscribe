@@ -97,9 +97,8 @@ class DiarizationWorker(QThread):
                        "--diarize", self._wav, str(self._num)]
             env = dict(os.environ, PYTHONPATH="src")
             from . import priority as _prio
-            from ..storage import settings as _s
-            bg = _s.load().get("load_mode", "background") == "background"
-            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | _prio.creationflag(bg)
+            # разделение — долгая фоновая операция, всегда пониженный приоритет
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | _prio.creationflag(True)
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", env=env,

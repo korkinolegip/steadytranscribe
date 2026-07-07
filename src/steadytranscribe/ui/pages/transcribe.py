@@ -372,6 +372,14 @@ class TranscribePage(QWidget):
         import time
         if not self._start_time:
             return
+        # АВТО-регулировка нагрузки: окно активно (пользователь ждёт результат) →
+        # обычный приоритет, быстрее; пользователь ушёл работать в другое приложение →
+        # пониженный приоритет, уступаем ему ресурсы. Всё само, без настроек.
+        from ...core import priority
+        win = self.window()
+        active = bool(win and win.isActiveWindow())
+        priority.set_background(not active)
+
         elapsed = time.monotonic() - self._start_time
         p = self._last_progress
         if p > 0.02:
