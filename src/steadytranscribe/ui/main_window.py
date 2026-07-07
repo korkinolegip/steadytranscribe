@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
                 self.nav.addItem(item)
         self.nav.currentItemChanged.connect(self._on_nav)
         slay.addWidget(self.nav, stretch=1)
-        version = QLabel("v1.4.0 · всё локально")
+        version = QLabel("v1.4.1 · всё локально")
         version.setObjectName("tertiary")
         version.setContentsMargins(14, 8, 8, 12)
         slay.addWidget(version)
@@ -137,15 +137,25 @@ class MainWindow(QMainWindow):
             self.models_page.refresh_rows()
 
     def closeEvent(self, event):
+        # Идёт тяжёлая обработка? — спросим подтверждение
+        busy = [w for w in (self.transcribe_page.worker, self.transcribe_page.diar_worker)
+                if w and w.isRunning()]
+        if busy:
+            if QMessageBox.question(self, APP_TITLE,
+                                    "Идёт обработка. Прервать и выйти?") != QMessageBox.Yes:
+                event.ignore()
+                return
+
+        # Завершаем ВСЕ фоновые потоки и процессы — чтобы не осталось сирот
+        for w in busy:
+            w.cancel()
+            w.wait(4000)
         if self._update_checker.isRunning():
-            self._update_checker.wait(500)
-        for w in (self.transcribe_page.worker, self.transcribe_page.diar_worker):
-            if w and w.isRunning():
-                if QMessageBox.question(self, APP_TITLE,
-                                        "Идёт обработка. Прервать и выйти?") != QMessageBox.Yes:
-                    event.ignore()
-                    return
-                w.cancel()
-                w.wait(3000)
+            self._update_checker.wait(1000)
+        # потоки скачивания моделей
+        for row in getattr(self.models_page, "rows", []):
+            if row.worker and row.worker.isRunning():
+                row.worker.cancel_event.set()
+                row.worker.wait(2000)
         self.transcribe_page._cleanup_wav()
         event.accept()

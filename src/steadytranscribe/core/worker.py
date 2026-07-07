@@ -67,9 +67,21 @@ class DiarizationWorker(QThread):
         self._words = words
         self._num = num_speakers
         self._cancelled = False
+        self._proc = None
 
     def cancel(self):
         self._cancelled = True
+        self._kill_proc()
+
+    def _kill_proc(self):
+        """Жёстко завершить дочерний процесс — чтобы не оставался сиротой."""
+        p = self._proc
+        if p is not None and p.poll() is None:
+            try:
+                p.kill()
+                p.wait(timeout=3)
+            except Exception:  # noqa: BLE001
+                pass
 
     def run(self):
         """Диаризация в ОТДЕЛЬНОМ ПРОЦЕССЕ — интерфейс не зависает (нативная
@@ -84,14 +96,14 @@ class DiarizationWorker(QThread):
                 cmd = [sys.executable, "-m", "steadytranscribe.app",
                        "--diarize", self._wav, str(self._num)]
             env = dict(os.environ, PYTHONPATH="src")
-            proc = subprocess.Popen(
+            self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", env=env,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             turns_raw = None
-            for line in proc.stdout:
+            for line in self._proc.stdout:
                 if self._cancelled:
-                    proc.terminate()
+                    self._kill_proc()
                     self.failed.emit("Отменено пользователем.")
                     return
                 line = line.strip()
@@ -99,7 +111,7 @@ class DiarizationWorker(QThread):
                     self.progress.emit("Определение собеседников…", float(line[9:]))
                 elif line.startswith("RESULT "):
                     turns_raw = json.loads(line[7:])
-            proc.wait()
+            self._proc.wait()
             if turns_raw is None:
                 raise RuntimeError("не удалось выполнить разделение")
             turns = [diarize.SpeakerTurn(sp, st, en) for sp, st, en in turns_raw]

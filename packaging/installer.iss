@@ -1,6 +1,6 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.4.0"
+#define AppVersion "1.4.1"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -45,9 +45,34 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 [Run]
 Filename: "{app}\SteadyTranscribe.exe"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
 
-; При удалении чистим настройки и логи (модели НЕ трогаем — чтобы не качать заново).
-; Это устраняет проблему: битые старые настройки переживали переустановку.
+; При удалении сносим ВСЮ папку приложения (в т.ч. файлы, созданные во время работы —
+; кэш Python и пр., которые иначе не давали удалить папку) и настройки/логи.
 [UninstallDelete]
+Type: filesandordirs; Name: "{app}"
 Type: files; Name: "{userappdata}\SteadyTranscribe\settings.json"
 Type: files; Name: "{userappdata}\SteadyTranscribe\log.txt"
 Type: files; Name: "{userappdata}\SteadyTranscribe\crash.txt"
+
+[Code]
+// Перед удалением: закрыть запущенное приложение (чтобы файлы не были заняты)
+// и предложить удалить данные (модели, история) — по желанию пользователя.
+procedure CurUninstallStepChanged(CurStep: TUninstallStep);
+var
+  DataDir: String;
+  ResultCode: Integer;
+begin
+  if CurStep = usUninstall then
+  begin
+    // жёстко завершаем все процессы приложения
+    Exec('taskkill.exe', '/F /IM SteadyTranscribe.exe /T', '',
+         SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    DataDir := ExpandConstant('{userappdata}\SteadyTranscribe');
+    if DirExists(DataDir) then
+    begin
+      if MsgBox('Удалить также скачанные модели, историю расшифровок и настройки?' + #13#10 +
+                'Да — удалить всё полностью. Нет — оставить модели и историю на диске.',
+                mbConfirmation, MB_YESNO) = IDYES then
+        DelTree(DataDir, True, True, True);
+    end;
+  end;
+end;
