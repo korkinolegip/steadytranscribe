@@ -25,9 +25,19 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.5"
+CURRENT_VERSION = "1.5.6"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
+
+# Файловый домен GitHub (objects.githubusercontent.com) периодически блокируется
+# в РФ — сам API при этом работает. Качаем по цепочке: напрямую → через зеркала.
+# Подлинность файла с зеркала гарантирует SHA256 из описания релиза (см. ниже).
+_DOWNLOAD_MIRRORS = [
+    "",                              # GitHub напрямую
+    "https://mirror.ghproxy.com/",
+    "https://ghproxy.net/",
+    "https://gh-proxy.com/",
+]
 
 
 def _parse_version(tag: str) -> tuple:
@@ -186,8 +196,9 @@ def consume_restart_marker() -> bool:
 
 
 class UpdateChecker(QThread):
-    """Проверяет новую версию. Отдаёт версию и URL ЛЁГКОГО установщика (без модели)."""
-    update_available = Signal(str, str)
+    """Проверяет новую версию. Отдаёт версию, URL лёгкого установщика и его SHA256
+    (из описания релиза — для проверки файла, скачанного через зеркало)."""
+    update_available = Signal(str, str, str)
 
     def run(self):
         try:
@@ -209,61 +220,93 @@ class UpdateChecker(QThread):
                 light = [a for a in exes if "with-model" not in a["name"].lower()]
                 pick = strict or light or exes
                 url = pick[0]["browser_download_url"] if pick else RELEASES_PAGE
-                self.update_available.emit(tag.lstrip("vV"), url)
+                m = re.search(r"sha256:\s*([0-9a-fA-F]{64})", data.get("body") or "")
+                sha = m.group(1).lower() if m else ""
+                self.update_available.emit(tag.lstrip("vV"), url, sha)
         except Exception:  # noqa: BLE001
             pass
 
 
 class InstallerDownloader(QThread):
+    """Скачивание установщика: GitHub напрямую → зеркала (файловый домен GitHub
+    блокируется в РФ). Файл с зеркала принимается только при совпадении SHA256."""
     progress = Signal(int, int)
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, url: str, parent=None):
+    def __init__(self, url: str, sha256: str = "", parent=None):
         super().__init__(parent)
         self.url = url
+        self.sha256 = (sha256 or "").lower()
         self._cancel = False
 
     def cancel(self):
         self._cancel = True
 
+    def _download(self, url: str, dest: str) -> None:
+        req = urllib.request.Request(url, headers={"User-Agent": "SteadyTranscribe"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            got = 0
+            with open(dest, "wb") as f:
+                while True:
+                    if self._cancel:
+                        raise InterruptedError
+                    chunk = resp.read(1024 * 256)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    got += len(chunk)
+                    self.progress.emit(got, total)
+        # оборванное скачивание не должно попасть в установку
+        if total and got != total:
+            raise OSError(f"скачано {got} из {total} байт — обрыв сети")
+
+    def _verify(self, dest: str, from_mirror: bool) -> None:
+        """SHA256 против отпечатка из описания релиза. Для зеркала — обязательно
+        (иначе зеркалу пришлось бы верить на слово), напрямую — если отпечаток есть."""
+        if not self.sha256:
+            if from_mirror:
+                raise OSError("нет отпечатка SHA256 — файлу с зеркала нельзя доверять")
+            return
+        import hashlib
+        h = hashlib.sha256()
+        with open(dest, "rb") as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
+        if h.hexdigest() != self.sha256:
+            raise OSError("файл повреждён или подменён (SHA256 не совпал)")
+
     def run(self):
         import logging
-        try:
-            dest = os.path.join(_updates_dir(), "SteadyTranscribe-Update.exe")
-            req = urllib.request.Request(self.url, headers={"User-Agent": "SteadyTranscribe"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                total = int(resp.headers.get("Content-Length", 0))
-                got = 0
-                with open(dest, "wb") as f:
-                    while True:
-                        if self._cancel:
-                            raise InterruptedError
-                        chunk = resp.read(1024 * 256)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        got += len(chunk)
-                        self.progress.emit(got, total)
-            # ЦЕЛОСТНОСТЬ: оборванное скачивание не должно попасть в установку —
-            # неполный установщик либо молча сломается, либо покажет непонятную ошибку
-            if total and got != total:
-                raise OSError(f"скачано {got} из {total} байт — обрыв сети")
-            logging.info("update: установщик скачан целиком (%s байт): %s", got, dest)
-            self.done.emit(dest)
-        except InterruptedError:
-            self.failed.emit("Обновление отменено.")
-        except Exception as e:  # noqa: BLE001
-            logging.error("update: скачивание не удалось: %s", e)
-            self.failed.emit(f"Не удалось скачать обновление: {e}")
+        dest = os.path.join(_updates_dir(), "SteadyTranscribe-Update.exe")
+        last_err = None
+        for prefix in _DOWNLOAD_MIRRORS:
+            url = prefix + self.url if prefix else self.url
+            try:
+                self._download(url, dest)
+                self._verify(dest, from_mirror=bool(prefix))
+                logging.info("update: скачано и проверено (%s)",
+                             prefix or "GitHub напрямую")
+                self.done.emit(dest)
+                return
+            except InterruptedError:
+                self.failed.emit("Обновление отменено.")
+                return
+            except Exception as e:  # noqa: BLE001
+                logging.error("update: источник «%s» не сработал: %s",
+                              prefix or "прямой", e)
+                last_err = e
+        self.failed.emit(f"Не удалось скачать обновление (все источники): {last_err}")
 
 
 class UpdateDialog(QDialog):
     """Скачивает и тихо устанавливает обновление — всё внутри программы."""
 
-    def __init__(self, version: str, url: str, parent=None):
+    def __init__(self, version: str, url: str, sha256: str = "", parent=None):
         super().__init__(parent)
         self.url = url
+        self.sha256 = sha256
         self.version = version
         self.setWindowTitle("Обновление SteadyTranscribe")
         self.setMinimumWidth(460)
@@ -307,7 +350,7 @@ class UpdateDialog(QDialog):
             return
         self.progress.show()
         self.status.setText("Скачивание обновления…")
-        self.downloader = InstallerDownloader(self.url, self)
+        self.downloader = InstallerDownloader(self.url, self.sha256, self)
         self.downloader.progress.connect(self._on_progress)
         self.downloader.done.connect(self._on_done)
         self.downloader.failed.connect(self._on_failed)
@@ -347,6 +390,6 @@ def check_async(parent) -> UpdateChecker:
     """Ручная/явная проверка: показывает диалог с кнопкой «Обновить сейчас»."""
     checker = UpdateChecker(parent)
     checker.update_available.connect(
-        lambda version, url: UpdateDialog(version, url, parent).exec())
+        lambda version, url, sha: UpdateDialog(version, url, sha, parent).exec())
     checker.start()
     return checker

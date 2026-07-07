@@ -173,14 +173,14 @@ class MainWindow(QMainWindow):
         checker.start()
         return checker
 
-    def _on_update_found_startup(self, version: str, url: str):
+    def _on_update_found_startup(self, version: str, url: str, sha: str = ""):
         if self._startup_dialog_shown:
             return
         self._startup_dialog_shown = True
-        dlg = updater.UpdateDialog(version, url, self)
+        dlg = updater.UpdateDialog(version, url, sha, self)
         if not dlg.exec():
             # «Позже»: скачиваем в фоне, установится при закрытии/простое
-            self._on_update_found(version, url)
+            self._on_update_found(version, url, sha)
 
     def _notify_if_updated(self):
         """Первый запуск новой версии — подтверждаем: «обновлено до vX»."""
@@ -198,13 +198,13 @@ class MainWindow(QMainWindow):
                 f"Установлена версия {updater.CURRENT_VERSION}. Всё прошло успешно.",
                 QSystemTrayIcon.Information, 5000)
 
-    def _on_update_found(self, version: str, url: str):
+    def _on_update_found(self, version: str, url: str, sha: str = ""):
         """Авто-режим: тихо скачиваем установщик в фоне, не мешая работе."""
         if updater.load_pending() or (self._auto_downloader
                                       and self._auto_downloader.isRunning()):
             return                          # уже скачано или качается
         self._new_version = version
-        self._auto_downloader = updater.InstallerDownloader(url, self)
+        self._auto_downloader = updater.InstallerDownloader(url, sha, self)
         self._auto_downloader.done.connect(
             lambda path, v=version: self._on_installer_ready(v, path))
         # ошибки скачивания игнорируем тихо — повторим при следующей проверке

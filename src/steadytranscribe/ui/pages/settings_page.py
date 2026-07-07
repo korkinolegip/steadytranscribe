@@ -209,11 +209,11 @@ class SettingsPage(QWidget):
         self._checker.finished.connect(self._on_check_done)
         self._checker.start()
 
-    def _on_update(self, version: str, url: str):
+    def _on_update(self, version: str, url: str, sha: str = ""):
         # обновление ВНУТРИ программы (никаких скачиваний через браузер):
         # тот же диалог, что и при запуске — скачает и тихо установит сам
         self.update_status.setText(f"Доступна версия {version}!")
-        updater.UpdateDialog(version, url, self).exec()
+        updater.UpdateDialog(version, url, sha, self).exec()
 
     def _on_check_done(self):
         if self.update_status.text() == "Проверяю…":

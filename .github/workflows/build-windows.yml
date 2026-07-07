@@ -88,6 +88,19 @@ jobs:
         with:
           files: packaging/Output/*.exe
 
+      # SHA256 в описание релиза: программа сверяет файл, скачанный через зеркала
+      # (файловый домен GitHub блокируется в РФ — зеркалам без проверки доверять нельзя)
+      - name: SHA256 в описание релиза
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          f=$(ls packaging/Output/SteadyTranscribe-Setup-*.exe | grep -v with-model | head -1)
+          h=$(sha256sum "$f" | cut -d' ' -f1)
+          gh release edit "${GITHUB_REF_NAME}" --notes "sha256: $h"
+          echo "sha256: $h"
+
       - name: Download base model (large-v3-turbo) for full installer
         shell: pwsh
         run: |
