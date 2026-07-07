@@ -104,7 +104,7 @@ QTextEdit {{
 }}
 QProgressBar {{
     background: {CARD_BG_ELEVATED}; border: none; border-radius: 5px;
-    height: 10px; text-align: center; color: transparent;
+    height: 14px; text-align: center; color: white; font-size: 10px;
 }}
 QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
 QComboBox, QSpinBox {{

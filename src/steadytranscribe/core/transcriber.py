@@ -68,32 +68,24 @@ class Transcriber:
         key = (model_name, device)
         if self._model is not None and self._model_key == key:
             return self._model
+        from . import models as model_store
+        if not model_store.is_downloaded(model_name):
+            raise TranscribeError(
+                f"Модель «{model_name}» не скачана.\n"
+                "Откройте страницу «Модели» и нажмите «Скачать» у нужной модели.")
         status_cb("Подготовка модели…", 0.1)
         from faster_whisper import WhisperModel
 
-        kwargs = dict(
-            download_root=models_dir(),
-            compute_type="int8",
-        )
         dev = "auto" if device == "auto" else device
-        errors = []
-        for endpoint in (None, "https://hf-mirror.com"):
-            try:
-                if endpoint:
-                    os.environ["HF_ENDPOINT"] = endpoint
-                    status_cb("Загрузка модели через зеркало…", 0.1)
-                self._model = WhisperModel(model_name, device=dev, **kwargs)
-                self._model_key = key
-                return self._model
-            except Exception as e:  # noqa: BLE001 — пробуем зеркало при любой сетевой ошибке
-                errors.append(str(e))
-            finally:
-                os.environ.pop("HF_ENDPOINT", None)
-        raise TranscribeError(
-            "Не удалось загрузить модель распознавания.\n"
-            "Проверьте интернет (модель скачивается один раз) или смените зеркало в настройках.\n"
-            f"Детали: {errors[-1][:200]}"
-        )
+        try:
+            self._model = WhisperModel(model_store.model_dir(model_name),
+                                       device=dev, compute_type="int8")
+            self._model_key = key
+            return self._model
+        except Exception as e:  # noqa: BLE001
+            raise TranscribeError(
+                f"Не удалось загрузить модель. Попробуйте удалить её на странице «Модели» "
+                f"и скачать заново.\nДетали: {str(e)[:200]}")
 
     def transcribe(self, wav_path: str, *, model: str, language: str, device: str,
                    initial_prompt: str, status_cb, cancel_check,

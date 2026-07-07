@@ -67,7 +67,7 @@ class ModelRow(QFrame):
         self.right = QVBoxLayout()
         self.right.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self.progress = QProgressBar()
-        self.progress.setFixedWidth(110)
+        self.progress.setFixedWidth(150)
         self.progress.hide()
         self.cancel_btn = QPushButton("Отмена")
         self.cancel_btn.hide()
@@ -128,8 +128,10 @@ class ModelRow(QFrame):
             self.worker.cancel_event.set()
 
     def _on_progress(self, done: int, total: int):
-        self.progress.setMaximum(max(total, 1))
-        self.progress.setValue(done)
+        self.progress.setMaximum(100)
+        self.progress.setValue(int(done / max(total, 1) * 100))
+        self.progress.setFormat(f"{done // 1048576} / {max(total // 1048576, 1)} МБ")
+        self.progress.setTextVisible(True)
 
     def _on_done(self):
         self.worker = None

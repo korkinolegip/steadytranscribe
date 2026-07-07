@@ -1,9 +1,14 @@
 """Страница «Настройки»: строки «заголовок + подпись + контрол справа» (как в FluidVoice)."""
+import webbrowser
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QLineEdit, QSpinBox, QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QSpinBox,
+    QVBoxLayout, QWidget,
 )
 
 from ...storage import settings as store
+from .. import updater
 from ..widgets import card
 
 
@@ -33,6 +38,7 @@ class SettingsPage(QWidget):
         title.setObjectName("h1")
         outer.addWidget(title)
 
+        # --- Распознавание ---
         box, lay = card("Распознавание")
         self.lang_box = QComboBox()
         for code, label in store.LANGUAGE_CHOICES:
@@ -40,7 +46,7 @@ class SettingsPage(QWidget):
         codes = [c for c, _ in store.LANGUAGE_CHOICES]
         self.lang_box.setCurrentIndex(codes.index(s["language"]) if s["language"] in codes else 0)
         self.lang_box.currentIndexChanged.connect(self._save)
-        _row(lay, "Язык речи", "Автоопределение работает хорошо; явный выбор чуть точнее и быстрее.", self.lang_box)
+        _row(lay, "Язык речи", "Автоопределение работает хорошо; явный выбор чуть точнее.", self.lang_box)
 
         self.device_box = QComboBox()
         for code, label in (("auto", "Автоматически"), ("cpu", "Процессор (CPU)"),
@@ -48,24 +54,61 @@ class SettingsPage(QWidget):
             self.device_box.addItem(label, code)
         self.device_box.setCurrentIndex({"auto": 0, "cpu": 1, "cuda": 2}.get(s["device"], 0))
         self.device_box.currentIndexChanged.connect(self._save)
-        _row(lay, "Устройство", "Видеокарта NVIDIA ускоряет распознавание в разы (если есть).", self.device_box)
+        _row(lay, "Устройство",
+             "«Автоматически» — программа сама выберет. Видеокарта NVIDIA ускоряет в разы.",
+             self.device_box)
         outer.addWidget(box)
 
+        # --- Словарь (многострочный) ---
         box2, lay2 = card("Словарь")
-        self.prompt_edit = QLineEdit(s["initial_prompt"])
-        self.prompt_edit.setPlaceholderText("SteadyControl, аудиобейдж, ХоРеКа")
-        self.prompt_edit.setMinimumWidth(280)
-        self.prompt_edit.editingFinished.connect(self._save)
-        _row(lay2, "Слова-подсказки", "Имена и термины через запятую — модель будет писать их правильно.", self.prompt_edit)
+        desc = QLabel("Впишите имена, названия и термины, которые встречаются в записях — "
+                      "по одному в строке или через запятую. Программа будет писать их правильно, "
+                      "а не на слух.")
+        desc.setObjectName("hint")
+        desc.setWordWrap(True)
+        lay2.addWidget(desc)
+        self.prompt_edit = QPlainTextEdit(s["initial_prompt"])
+        self.prompt_edit.setPlaceholderText("SteadyControl\nаудиобейдж\nХоРеКа\nимена коллег…")
+        self.prompt_edit.setFixedHeight(96)
+        lay2.addWidget(self.prompt_edit)
+        save_dict = QPushButton("Сохранить словарь")
+        save_dict.clicked.connect(self._save)
+        drow = QHBoxLayout()
+        drow.addStretch()
+        drow.addWidget(save_dict)
+        lay2.addLayout(drow)
         outer.addWidget(box2)
 
+        # --- История ---
         box3, lay3 = card("История")
         self.history_spin = QSpinBox()
         self.history_spin.setRange(10, 1000)
         self.history_spin.setValue(int(s["history_limit"]))
         self.history_spin.valueChanged.connect(self._save)
-        _row(lay3, "Хранить записей", "Старые записи удаляются автоматически при превышении.", self.history_spin)
+        _row(lay3, "Хранить записей", "Старые записи удаляются автоматически при превышении.",
+             self.history_spin)
         outer.addWidget(box3)
+
+        # --- Обновления ---
+        box4, lay4 = card("Обновления")
+        self.update_status = QLabel(f"Текущая версия: {updater.CURRENT_VERSION}")
+        self.update_status.setObjectName("hint")
+        check_btn = QPushButton("Проверить обновления")
+        check_btn.clicked.connect(self._check_updates)
+        page_btn = QPushButton("Страница релизов")
+        page_btn.setObjectName("link")
+        page_btn.clicked.connect(lambda: webbrowser.open(updater.RELEASES_PAGE))
+        urow = QHBoxLayout()
+        urow.addWidget(self.update_status, stretch=1)
+        urow.addWidget(check_btn)
+        urow.addWidget(page_btn)
+        lay4.addLayout(urow)
+        hint4 = QLabel("Программа сама проверяет обновления при запуске. "
+                       "Когда выйдет новая версия — предложит скачать.")
+        hint4.setObjectName("hint")
+        hint4.setWordWrap(True)
+        lay4.addWidget(hint4)
+        outer.addWidget(box4)
 
         note = QLabel("Модель распознавания выбирается на странице «Модели». "
                       "Всё локально: файлы и текст не покидают компьютер.")
@@ -74,12 +117,33 @@ class SettingsPage(QWidget):
         outer.addWidget(note)
         outer.addStretch()
 
+        self._checker = None
+
     def _save(self, *_):
         s = store.load()
         s.update({
             "language": self.lang_box.currentData(),
             "device": self.device_box.currentData(),
-            "initial_prompt": self.prompt_edit.text().strip(),
+            "initial_prompt": self.prompt_edit.toPlainText().strip(),
             "history_limit": self.history_spin.value(),
         })
         store.save(s)
+
+    def _check_updates(self):
+        self.update_status.setText("Проверяю…")
+        self._checker = updater.UpdateChecker(self)
+        self._checker.update_available.connect(self._on_update)
+        self._checker.finished.connect(self._on_check_done)
+        self._checker.start()
+
+    def _on_update(self, version: str, url: str):
+        self.update_status.setText(f"Доступна версия {version}!")
+        if updater.QMessageBox.information(
+                self, "Обновление",
+                f"Вышла версия {version} (у вас {updater.CURRENT_VERSION}). Скачать?",
+                updater.QMessageBox.Yes | updater.QMessageBox.No) == updater.QMessageBox.Yes:
+            webbrowser.open(url)
+
+    def _on_check_done(self):
+        if self.update_status.text() == "Проверяю…":
+            self.update_status.setText(f"У вас последняя версия ({updater.CURRENT_VERSION}) ✅")

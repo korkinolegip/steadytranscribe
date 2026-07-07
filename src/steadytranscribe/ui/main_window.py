@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 
 from ..core.resources import resource
 from ..core.transcriber import Transcriber
-from . import updater
+from . import onboarding, updater
 
 
 def _asset(name: str) -> str:
@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
                 self.nav.addItem(item)
         self.nav.currentItemChanged.connect(self._on_nav)
         slay.addWidget(self.nav, stretch=1)
-        version = QLabel("v1.2.2 · всё локально")
+        version = QLabel("v1.3.0 · всё локально")
         version.setObjectName("tertiary")
         version.setContentsMargins(14, 8, 8, 12)
         slay.addWidget(version)
@@ -118,6 +118,9 @@ class MainWindow(QMainWindow):
 
         # тихая проверка обновлений при запуске
         self._update_checker = updater.check_async(self)
+        # мини-обучение и базовая модель при первом запуске
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
 
     def _on_nav(self, current: QListWidgetItem, _prev):
         if current is None:
