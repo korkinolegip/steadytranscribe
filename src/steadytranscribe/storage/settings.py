@@ -47,6 +47,9 @@ def load() -> dict:
         data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     except (OSError, ValueError):
         pass
+    # CUDA больше не поддерживается (сборка CPU-only) — переносим на процессор
+    if data.get("device") in ("cuda", "auto"):
+        data["device"] = "cpu"
     return data
 
 

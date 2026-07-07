@@ -59,7 +59,8 @@ def _selftest(audio_path: str) -> int:
     wav = convert.to_wav16k(audio_path)
     print("SELFTEST: ffmpeg convert ok", flush=True)
     t = Transcriber()
-    r = t.transcribe(wav, model="tiny", language="ru", device="auto",
+    # device="cuda" — воспроизводим случай пользователя (раньше падало на CUDA)
+    r = t.transcribe(wav, model="tiny", language="ru", device="cuda",
                      initial_prompt="",
                      status_cb=lambda s, p: print(f"SELFTEST: progress {p*100:.0f}%", flush=True),
                      cancel_check=lambda: False, word_timestamps=True)

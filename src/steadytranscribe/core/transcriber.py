@@ -81,10 +81,14 @@ class Transcriber:
         status_cb("Загрузка модели в память…", 0.1)
         from faster_whisper import WhisperModel
 
-        dev = "auto" if device == "auto" else device
+        # Всегда CPU: библиотеки CUDA в сборку не входят (огромные и не нужны),
+        # а попытка использовать видеокарту вызывает мгновенный крах.
+        # Ускорение обеспечивает AVX2 на процессоре.
+        import logging
+        logging.info("transcribe: движок на CPU (device игнорируется: %s)", device)
         try:
             self._model = WhisperModel(model_store.model_dir(model_name),
-                                       device=dev, compute_type="int8")
+                                       device="cpu", compute_type="int8")
             self._model_key = key
             return self._model
         except Exception as e:  # noqa: BLE001

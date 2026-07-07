@@ -48,15 +48,6 @@ class SettingsPage(QWidget):
         self.lang_box.currentIndexChanged.connect(self._save)
         _row(lay, "Язык речи", "Автоопределение работает хорошо; явный выбор чуть точнее.", self.lang_box)
 
-        self.device_box = QComboBox()
-        for code, label in (("auto", "Автоматически"), ("cpu", "Процессор (CPU)"),
-                            ("cuda", "Видеокарта NVIDIA")):
-            self.device_box.addItem(label, code)
-        self.device_box.setCurrentIndex({"auto": 0, "cpu": 1, "cuda": 2}.get(s["device"], 0))
-        self.device_box.currentIndexChanged.connect(self._save)
-        _row(lay, "Устройство",
-             "«Автоматически» — программа сама выберет. Видеокарта NVIDIA ускоряет в разы.",
-             self.device_box)
         outer.addWidget(box)
 
         # --- Словарь (многострочный) ---
@@ -134,7 +125,6 @@ class SettingsPage(QWidget):
         s = store.load()
         s.update({
             "language": self.lang_box.currentData(),
-            "device": self.device_box.currentData(),
             "initial_prompt": self.prompt_edit.toPlainText().strip(),
             "history_limit": self.history_spin.value(),
         })
