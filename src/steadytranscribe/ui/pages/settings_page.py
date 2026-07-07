@@ -121,9 +121,10 @@ class SettingsPage(QWidget):
         self.auto_update_chk.setChecked(bool(s.get("auto_update", True)))
         self.auto_update_chk.toggled.connect(self._save)
         lay4.addWidget(self.auto_update_chk)
-        hint4 = QLabel("При запуске программа проверяет обновления. Если включено — "
-                       "новая версия тихо скачивается в фоне и устанавливается сама, "
-                       "когда вы закрываете программу (работе не мешает, кликать не нужно).")
+        hint4 = QLabel("Как в современных программах: новая версия тихо скачивается в фоне "
+                       "и устанавливается сама — когда программа простаивает, при закрытии "
+                       "или при следующем запуске. Расшифровку никогда не прерывает, "
+                       "кликать ничего не нужно.")
         hint4.setObjectName("hint")
         hint4.setWordWrap(True)
         lay4.addWidget(hint4)
@@ -202,12 +203,10 @@ class SettingsPage(QWidget):
         self._checker.start()
 
     def _on_update(self, version: str, url: str):
+        # обновление ВНУТРИ программы (никаких скачиваний через браузер):
+        # тот же диалог, что и при запуске — скачает и тихо установит сам
         self.update_status.setText(f"Доступна версия {version}!")
-        if updater.QMessageBox.information(
-                self, "Обновление",
-                f"Вышла версия {version} (у вас {updater.CURRENT_VERSION}). Скачать?",
-                updater.QMessageBox.Yes | updater.QMessageBox.No) == updater.QMessageBox.Yes:
-            webbrowser.open(url)
+        updater.UpdateDialog(version, url, self).exec()
 
     def _on_check_done(self):
         if self.update_status.text() == "Проверяю…":

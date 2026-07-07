@@ -128,13 +128,27 @@ class MainWindow(QMainWindow):
                 self.nav.setCurrentRow(i)
                 break
 
-        # обновления: если включено авто-обновление (по умолчанию) — тихо скачиваем
-        # в фоне и ставим при закрытии; иначе показываем диалог с кнопкой.
-        self._pending_installer = None      # путь к скачанному установщику
+        # обновления по схеме Chrome: тихо скачать → отложить → применить
+        # при простое / при выходе / при следующем запуске (см. updater.py).
+        self._installing = False            # установка уже запущена (не дублировать)
         self._auto_downloader = None
         self._update_checker = self._start_update_flow()
-        # мини-обучение и базовая модель при первом запуске
+        # таймер простоя: окно неактивно ≥10 мин и ничего не обрабатывается →
+        # ставим отложенное обновление, вернёмся свёрнутыми (фокус не крадём)
+        import time
         from PySide6.QtCore import QTimer
+        self._last_active = time.monotonic()
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setInterval(30_000)
+        self._idle_timer.timeout.connect(self._idle_tick)
+        self._idle_timer.start()
+        # повторная проверка обновлений раз в 4 часа (программу держат открытой днями)
+        self._recheck_timer = QTimer(self)
+        self._recheck_timer.setInterval(4 * 3600 * 1000)
+        self._recheck_timer.timeout.connect(
+            lambda: setattr(self, "_update_checker", self._start_update_flow()))
+        self._recheck_timer.start()
+        # мини-обучение и базовая модель при первом запуске
         QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
 
     def _start_update_flow(self):
@@ -151,23 +165,52 @@ class MainWindow(QMainWindow):
 
     def _on_update_found(self, version: str, url: str):
         """Авто-режим: тихо скачиваем установщик в фоне, не мешая работе."""
+        if updater.load_pending() or (self._auto_downloader
+                                      and self._auto_downloader.isRunning()):
+            return                          # уже скачано или качается
         self._new_version = version
         self._auto_downloader = updater.InstallerDownloader(url, self)
-        self._auto_downloader.done.connect(self._on_installer_ready)
-        # ошибки скачивания игнорируем тихо — повторим при следующем запуске
+        self._auto_downloader.done.connect(
+            lambda path, v=version: self._on_installer_ready(v, path))
+        # ошибки скачивания игнорируем тихо — повторим при следующей проверке
         self._auto_downloader.start()
 
-    def _on_installer_ready(self, installer_path: str):
-        """Установщик скачан. Ставим при закрытии, чтобы не прерывать работу.
-        Пользователю — деликатное уведомление, что обновление готово."""
-        self._pending_installer = installer_path
+    def _on_installer_ready(self, version: str, installer_path: str):
+        """Установщик скачан и отложен. Применится при простое/выходе/запуске."""
+        updater.save_pending(version, installer_path)
         if self.tray is not None:
             from PySide6.QtWidgets import QSystemTrayIcon
-            ver = getattr(self, "_new_version", "")
             self.tray.showMessage(
                 "Обновление готово",
-                f"Версия {ver} загружена и установится сама, когда вы закроете программу.",
+                f"Версия {version} загружена и установится сама — работе не помешает.",
                 QSystemTrayIcon.Information, 6000)
+
+    def _busy(self) -> bool:
+        if any(w and w.isRunning() for w in (self.transcribe_page.worker,
+                                             self.transcribe_page.diar_worker)):
+            return True
+        return any(row.worker and row.worker.isRunning()
+                   for row in getattr(self.models_page, "rows", []))
+
+    def _idle_tick(self):
+        import time
+        if self.isActiveWindow():
+            self._last_active = time.monotonic()
+            return
+        if self._installing or self._busy() or not updater.load_pending():
+            return
+        if time.monotonic() - self._last_active < 600:   # 10 минут простоя
+            return
+        # Простой: тихо ставим обновление. Программа перезапустится СВЁРНУТОЙ
+        # (маркер), чтобы не выскочить поверх работы пользователя.
+        self._installing = True
+        updater.mark_restart_minimized()
+        if updater.install_pending(relaunch=True):
+            from PySide6.QtWidgets import QApplication
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(300, QApplication.quit)
+        else:
+            self._installing = False
 
     def _on_nav(self, current: QListWidgetItem, _prev):
         if current is None:
@@ -214,10 +257,9 @@ class MainWindow(QMainWindow):
         from ..core import jobkill
         jobkill.kill_all()
 
-        # Тихо ставим скачанное обновление — уже на выходе, работе не мешаем.
-        if self._pending_installer and os.path.exists(self._pending_installer):
-            try:
-                updater.run_installer_silent(self._pending_installer)
-            except Exception:  # noqa: BLE001
-                pass
+        # Тихо ставим отложенное обновление — на выходе, БЕЗ перезапуска
+        # (пользователь закрыл программу — не открываем её заново).
+        if not self._installing and updater.load_pending():
+            self._installing = True
+            updater.install_pending(relaunch=False)
         event.accept()

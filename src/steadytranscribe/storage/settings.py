@@ -3,7 +3,13 @@ import json
 import os
 import sys
 
+# Версия схемы настроек. ЗАДЕЛ НА БУДУЩЕЕ: любое переименование/изменение смысла
+# ключа — новая версия + шаг в _MIGRATIONS. Тогда обновления программы никогда
+# не «ломают» старые настройки пользователей и не требуют переустановки.
+SETTINGS_VERSION = 1
+
 DEFAULTS = {
+    "settings_version": SETTINGS_VERSION,
     "model": "large-v3-turbo",    # по умолчанию максимальное качество (как согласовано)
     "language": "auto",           # auto | ru | en | ...
     "device": "auto",             # auto | cpu | cuda
@@ -11,8 +17,24 @@ DEFAULTS = {
     "history_limit": 50,          # как maxEntries в оригинале
     "hf_mirror": "auto",          # auto: huggingface.co → fallback hf-mirror.com
     "onboarded": False,           # мини-обучение при первом запуске показано
-    "auto_update": True,          # тихо скачивать обновление и ставить при закрытии
+    "auto_update": True,          # тихо качать обновления и ставить при простое/выходе/запуске
 }
+
+# Миграции старых настроек: {из_версии: функция(data) -> data}.
+# Пример на будущее: 1 → 2 переименовать ключ — _MIGRATIONS[1] = lambda d: {...}
+_MIGRATIONS: dict = {}
+
+
+def _migrate(data: dict) -> dict:
+    v = int(data.get("settings_version", 1) or 1)
+    while v < SETTINGS_VERSION:
+        step = _MIGRATIONS.get(v)
+        if step is None:
+            break
+        data = step(data)
+        v += 1
+        data["settings_version"] = v
+    return data
 
 MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3-turbo"]
 MODEL_LABELS = {
@@ -45,6 +67,7 @@ def load() -> dict:
     try:
         with open(_settings_path(), encoding="utf-8") as f:
             stored = json.load(f)
+        stored = _migrate(stored)
         data.update({k: v for k, v in stored.items() if k in DEFAULTS})
     except (OSError, ValueError):
         pass

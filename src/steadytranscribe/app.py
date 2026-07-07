@@ -107,6 +107,15 @@ def main():
         idx = sys.argv.index("--diarize")
         sys.exit(_run_diarize(sys.argv[idx + 1], int(sys.argv[idx + 2])))
 
+    # Отложенное обновление с прошлого сеанса? Ставим ДО открытия окна:
+    # установщик тихо обновит программу и сам запустит новую версию.
+    try:
+        from .ui import updater as _updater
+        if _updater.apply_staged_at_launch():
+            sys.exit(0)
+    except Exception:  # noqa: BLE001
+        pass
+
     from PySide6.QtWidgets import QApplication, QMessageBox
     log_path = _setup_logging()
     logging.info("=== SteadyTranscribe запуск ===")
@@ -147,7 +156,18 @@ def main():
 
     from .ui.main_window import MainWindow
     window = MainWindow()
-    window.show()
+    # после обновления на простое возвращаемся СВЁРНУТЫМИ — не крадём фокус
+    from .ui import updater as _upd
+    if _upd.consume_restart_marker():
+        window.showMinimized()
+        if getattr(window, "tray", None):
+            from PySide6.QtWidgets import QSystemTrayIcon
+            window.tray.showMessage(
+                "Программа обновлена",
+                f"Установлена версия {_upd.CURRENT_VERSION}. Всё готово к работе.",
+                QSystemTrayIcon.Information, 5000)
+    else:
+        window.show()
     sys.exit(app.exec())
 
 

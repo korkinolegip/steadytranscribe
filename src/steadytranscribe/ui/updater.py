@@ -1,14 +1,20 @@
-"""Автообновление через GitHub Releases — полностью внутри программы.
+"""Автообновление через GitHub Releases — как в современных программах (Chrome).
 
-При запуске проверяет последнюю версию. Если новее — по кнопке скачивает
-установщик и запускает его в ТИХОМ режиме (/VERYSILENT): без мастера,
-без прав администратора (установка в пользовательскую папку), с автоперезапуском.
+Схема «скачал → отложил → применил в удобный момент»:
+1. Проверка при запуске (и периодически). Новая версия ТИХО скачивается в фоне
+   в папку updates и «ложится на полку» (staged) — переживает перезапуск и крах.
+2. Установка — только когда пользователю не мешает:
+   • при ПРОСТОЕ (окно неактивно ≥10 мин, ничего не обрабатывается) — тихо
+     ставится и возвращается свёрнутой, не крадя фокус;
+   • при ВЫХОДЕ — тихо ставится без перезапуска (/NORELAUNCH);
+   • при СЛЕДУЮЩЕМ ЗАПУСКЕ — если отложенное обновление ещё не применилось.
+3. Во время расшифровки/разделения установка никогда не запускается.
+Защита от цикла: после 2 неудачных попыток отложенное обновление сбрасывается.
 """
 import json
 import os
 import subprocess
 import sys
-import tempfile
 import urllib.request
 
 from PySide6.QtCore import QThread, Signal
@@ -17,7 +23,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-CURRENT_VERSION = "1.5.0"
+from ..storage.settings import app_data_dir
+
+CURRENT_VERSION = "1.5.1"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -28,6 +36,112 @@ def _parse_version(tag: str) -> tuple:
         return tuple(int(n) for n in nums[:3])
     except ValueError:
         return (0, 0, 0)
+
+
+# ---------- «полка» отложенных обновлений (staged) ----------
+
+def _updates_dir() -> str:
+    path = os.path.join(app_data_dir(), "updates")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _pending_path() -> str:
+    return os.path.join(_updates_dir(), "pending.json")
+
+
+def load_pending() -> dict | None:
+    """{"version", "path", "attempts"} или None."""
+    try:
+        with open(_pending_path(), encoding="utf-8") as f:
+            p = json.load(f)
+        if p.get("version") and p.get("path"):
+            return p
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def save_pending(version: str, installer_path: str) -> None:
+    with open(_pending_path(), "w", encoding="utf-8") as f:
+        json.dump({"version": version, "path": installer_path, "attempts": 0}, f)
+
+
+def clear_pending() -> None:
+    """Убрать отложенное обновление вместе со скачанными установщиками."""
+    try:
+        for name in os.listdir(_updates_dir()):
+            try:
+                os.remove(os.path.join(_updates_dir(), name))
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def run_installer_silent(installer_path: str, relaunch: bool = True) -> None:
+    """Тихая установка (/VERYSILENT). relaunch=False (/NORELAUNCH) — при выходе:
+    пользователь закрыл программу, не открываем её заново."""
+    args = [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
+    if not relaunch:
+        args.append("/NORELAUNCH")
+    subprocess.Popen(args, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def install_pending(relaunch: bool) -> bool:
+    """Запустить отложенное обновление, посчитав попытку (защита от цикла)."""
+    p = load_pending()
+    if not p or not os.path.exists(p["path"]):
+        return False
+    p["attempts"] = int(p.get("attempts", 0)) + 1
+    try:
+        with open(_pending_path(), "w", encoding="utf-8") as f:
+            json.dump(p, f)
+    except OSError:
+        pass
+    try:
+        run_installer_silent(p["path"], relaunch=relaunch)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def apply_staged_at_launch() -> bool:
+    """Вызывается в самом начале запуска. Если с прошлого раза отложено более
+    новое обновление — ставим его сейчас (установщик перезапустит программу).
+    True — установка пошла, вызывающий должен немедленно выйти."""
+    p = load_pending()
+    if not p:
+        return False
+    stale = (_parse_version(p["version"]) <= _parse_version(CURRENT_VERSION)
+             or not os.path.exists(p["path"]))
+    if stale or int(p.get("attempts", 0)) >= 2:
+        clear_pending()   # уже применилось / файла нет / две неудачные попытки
+        return False
+    return install_pending(relaunch=True)
+
+
+# маркер «после обновления на простое вернуться свёрнутым, не красть фокус»
+def _marker_path() -> str:
+    return os.path.join(app_data_dir(), "restart_minimized")
+
+
+def mark_restart_minimized() -> None:
+    try:
+        with open(_marker_path(), "w", encoding="utf-8") as f:
+            f.write("1")
+    except OSError:
+        pass
+
+
+def consume_restart_marker() -> bool:
+    if os.path.exists(_marker_path()):
+        try:
+            os.remove(_marker_path())
+        except OSError:
+            pass
+        return True
+    return False
 
 
 class UpdateChecker(QThread):
@@ -44,9 +158,15 @@ class UpdateChecker(QThread):
                 data = json.load(resp)
             tag = data.get("tag_name", "")
             if _parse_version(tag) > _parse_version(CURRENT_VERSION):
+                # ЗАДЕЛ НА БУДУЩЕЕ: сначала строгое каноничное имя лёгкого
+                # установщика (это имя — контракт, менять нельзя), затем
+                # мягкие запасные варианты — если имена в релизе поменяются.
+                import re
                 exes = [a for a in data.get("assets", []) if a["name"].endswith(".exe")]
+                strict = [a for a in exes
+                          if re.fullmatch(r"SteadyTranscribe-Setup-[\d.]+\.exe", a["name"])]
                 light = [a for a in exes if "with-model" not in a["name"].lower()]
-                pick = light or exes
+                pick = strict or light or exes
                 url = pick[0]["browser_download_url"] if pick else RELEASES_PAGE
                 self.update_available.emit(tag.lstrip("vV"), url)
         except Exception:  # noqa: BLE001
@@ -68,7 +188,7 @@ class InstallerDownloader(QThread):
 
     def run(self):
         try:
-            dest = os.path.join(tempfile.gettempdir(), "SteadyTranscribe-Update.exe")
+            dest = os.path.join(_updates_dir(), "SteadyTranscribe-Update.exe")
             req = urllib.request.Request(self.url, headers={"User-Agent": "SteadyTranscribe"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 total = int(resp.headers.get("Content-Length", 0))
@@ -146,11 +266,9 @@ class UpdateDialog(QDialog):
     def _on_done(self, installer_path: str):
         self.status.setText("Установка обновления… Программа перезапустится.")
         try:
-            # /VERYSILENT — тихая установка без мастера; per-user → без UAC;
-            # установщик сам закроет приложение, поставит новую версию и запустит её.
-            subprocess.Popen([installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES",
-                              "/NORESTART"],
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            # тихая установка; установщик сам закроет приложение,
+            # поставит новую версию и запустит её заново
+            run_installer_silent(installer_path, relaunch=True)
         except Exception as e:  # noqa: BLE001
             self._on_failed(f"Не удалось запустить установку: {e}")
             return

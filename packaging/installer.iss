@@ -1,6 +1,6 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.5.0"
+#define AppVersion "1.5.1"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -36,6 +36,14 @@ RestartApplications=no
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
+; ЗАДЕЛ НА БУДУЩЕЕ: перед установкой сносим старый код приложения (_internal, exe).
+; Иначе от версии к версии копятся устаревшие библиотеки/файлы, и однажды обновление
+; «поверх» ломается так, что пользователю приходится переустанавливать вручную.
+; {app}\models НЕ трогаем — там может лежать вшитая модель (установка «с моделью»).
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+Type: files; Name: "{app}\SteadyTranscribe.exe"
+
 [Files]
 Source: "..\dist\SteadyTranscribe\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 #ifdef WITHMODEL
@@ -52,8 +60,9 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 [Run]
 ; Обычная установка: галочка «Запустить» в конце мастера.
 Filename: "{app}\SteadyTranscribe.exe"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
-; Тихое авто-обновление (/VERYSILENT): запускаем приложение сами, чтобы оно перезапустилось.
-Filename: "{app}\SteadyTranscribe.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
+; Тихое авто-обновление (/VERYSILENT): перезапускаем приложение, КРОМЕ установки
+; при выходе (/NORELAUNCH) — пользователь закрыл программу, не открываем её снова.
+Filename: "{app}\SteadyTranscribe.exe"; Flags: nowait runasoriginaluser; Check: ShouldRelaunch
 
 ; При удалении сносим ВСЮ папку приложения (в т.ч. файлы, созданные во время работы —
 ; кэш Python и пр., которые иначе не давали удалить папку) и настройки/логи.
@@ -64,6 +73,28 @@ Type: files; Name: "{userappdata}\SteadyTranscribe\log.txt"
 Type: files; Name: "{userappdata}\SteadyTranscribe\crash.txt"
 
 [Code]
+// Есть ли параметр в командной строке установщика (регистр не важен)
+function CmdLineParamExists(const Value: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), Value) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+// Перезапускать приложение после тихого обновления?
+// Да — при обновлении на простое/при запуске. Нет (/NORELAUNCH) — при выходе:
+// пользователь закрыл программу, не открываем её заново.
+function ShouldRelaunch: Boolean;
+begin
+  Result := WizardSilent and not CmdLineParamExists('/NORELAUNCH');
+end;
+
 // Перед удалением: закрыть запущенное приложение (чтобы файлы не были заняты)
 // и предложить удалить данные (модели, история) — по желанию пользователя.
 procedure CurUninstallStepChanged(CurStep: TUninstallStep);
