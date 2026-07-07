@@ -105,7 +105,14 @@ class SettingsPage(QWidget):
 
         # --- Обновления ---
         box4, lay4 = card("Обновления")
-        self.update_status = QLabel(f"Текущая версия: {updater.CURRENT_VERSION}")
+        # видимый статус: что уже скачано и ждёт установки
+        pend = updater.load_pending()
+        if pend:
+            status_txt = (f"Текущая версия: {updater.CURRENT_VERSION}. "
+                          f"✓ Обновление {pend['version']} скачано — установится само.")
+        else:
+            status_txt = f"Текущая версия: {updater.CURRENT_VERSION}"
+        self.update_status = QLabel(status_txt)
         self.update_status.setObjectName("hint")
         check_btn = QPushButton("Проверить обновления")
         check_btn.clicked.connect(self._check_updates)

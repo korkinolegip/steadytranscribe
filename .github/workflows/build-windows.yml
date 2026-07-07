@@ -18,6 +18,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Lint — критичные ошибки (дубликаты функций, неопределённые имена)
+        shell: bash
+        run: |
+          pip install pyflakes
+          python -m pyflakes src/steadytranscribe > flakes.txt || true
+          if grep -E "redefinition|undefined name" flakes.txt; then
+            echo "::error::Критичная ошибка линтера — сборка остановлена (см. выше)"
+            exit 1
+          fi
+          echo "Lint OK"
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt pyinstaller

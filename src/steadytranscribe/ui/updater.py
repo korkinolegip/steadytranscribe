@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.2"
+CURRENT_VERSION = "1.5.3"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -82,16 +82,22 @@ def clear_pending() -> None:
 def run_installer_silent(installer_path: str, relaunch: bool = True) -> None:
     """Тихая установка (/VERYSILENT). relaunch=False (/NORELAUNCH) — при выходе:
     пользователь закрыл программу, не открываем её заново."""
-    args = [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
+    import logging
+    args = [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+            "/LOG=" + os.path.join(app_data_dir(), "install.log")]
     if not relaunch:
         args.append("/NORELAUNCH")
+    logging.info("update: запуск установщика %s", args)
     subprocess.Popen(args, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def install_pending(relaunch: bool) -> bool:
     """Запустить отложенное обновление, посчитав попытку (защита от цикла)."""
+    import logging
     p = load_pending()
     if not p or not os.path.exists(p["path"]):
+        logging.warning("update: установка не запущена — файл обновления отсутствует "
+                        "(антивирус удалил?): %s", p)
         return False
     p["attempts"] = int(p.get("attempts", 0)) + 1
     try:
@@ -101,8 +107,11 @@ def install_pending(relaunch: bool) -> bool:
         pass
     try:
         run_installer_silent(p["path"], relaunch=relaunch)
+        logging.info("update: установщик %s запущен (relaunch=%s, попытка %s)",
+                     p["version"], relaunch, p["attempts"])
         return True
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        logging.error("update: не удалось запустить установщик: %s", e)
         return False
 
 
@@ -110,14 +119,19 @@ def apply_staged_at_launch() -> bool:
     """Вызывается в самом начале запуска. Если с прошлого раза отложено более
     новое обновление — ставим его сейчас (установщик перезапустит программу).
     True — установка пошла, вызывающий должен немедленно выйти."""
+    import logging
     p = load_pending()
     if not p:
+        clear_pending()   # подчистить осиротевшие файлы установщиков (место на диске)
         return False
     stale = (_parse_version(p["version"]) <= _parse_version(CURRENT_VERSION)
              or not os.path.exists(p["path"]))
     if stale or int(p.get("attempts", 0)) >= 2:
+        logging.info("update: отложенное %s сброшено (stale=%s, попыток=%s)",
+                     p.get("version"), stale, p.get("attempts"))
         clear_pending()   # уже применилось / файла нет / две неудачные попытки
         return False
+    logging.info("update: применяю отложенное %s при запуске", p.get("version"))
     return install_pending(relaunch=True)
 
 
@@ -216,6 +230,7 @@ class UpdateDialog(QDialog):
     def __init__(self, version: str, url: str, parent=None):
         super().__init__(parent)
         self.url = url
+        self.version = version
         self.setWindowTitle("Обновление SteadyTranscribe")
         self.setMinimumWidth(460)
         self.downloader = None
@@ -247,6 +262,12 @@ class UpdateDialog(QDialog):
     def _start(self):
         self.update_btn.setEnabled(False)
         self.later_btn.setEnabled(False)
+        # уже скачано в фоне (лежит «на полке»)? — ставим сразу, не качаем заново
+        p = load_pending()
+        if p and p.get("version") == self.version and os.path.exists(p["path"]):
+            self.status.setText("Обновление уже скачано — устанавливаю…")
+            self._on_done(p["path"])
+            return
         self.progress.show()
         self.status.setText("Скачивание обновления…")
         self.downloader = InstallerDownloader(self.url, self)
@@ -265,6 +286,9 @@ class UpdateDialog(QDialog):
 
     def _on_done(self, installer_path: str):
         self.status.setText("Установка обновления… Программа перезапустится.")
+        # запоминаем «на полке»: если установка сорвётся — повторная попытка
+        # пройдёт уже без скачивания
+        save_pending(self.version, installer_path)
         try:
             # тихая установка; установщик сам закроет приложение,
             # поставит новую версию и запустит её заново
@@ -280,13 +304,6 @@ class UpdateDialog(QDialog):
         self.later_btn.setEnabled(True)
         self.progress.hide()
         self.status.setText(f"⚠️ {msg}")
-
-
-def run_installer_silent(installer_path: str) -> None:
-    """Запустить установщик обновления тихо (/VERYSILENT), не привязывая к job —
-    он должен пережить закрытие приложения и обновить его."""
-    subprocess.Popen([installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
-                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
 
 def check_async(parent) -> UpdateChecker:

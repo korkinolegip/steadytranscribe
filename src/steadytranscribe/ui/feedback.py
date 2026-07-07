@@ -35,12 +35,14 @@ def collect_report(extra: str = "") -> str:
     from .updater import CURRENT_VERSION
     log = _tail(os.path.join(app_data_dir(), "log.txt"))
     crash = _tail(os.path.join(app_data_dir(), "crash.txt"), 2500)
+    install = _tail(os.path.join(app_data_dir(), "install.log"), 2500)
     return (
         f"Версия: {CURRENT_VERSION}\n"
         f"ОС: {platform.platform()}\n"
         f"Процессор: {platform.processor()}\n"
         f"Событие: {extra or '(ручная отправка)'}\n"
         f"\n=== ЛОГ ===\n{log}\n"
+        f"\n=== ЛОГ УСТАНОВЩИКА ===\n{install}\n"
         f"\n=== АВАРИЙНЫЙ ДАМП ===\n{crash}\n")
 
 
