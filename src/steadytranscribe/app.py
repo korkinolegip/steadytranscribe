@@ -35,7 +35,15 @@ def _selftest(audio_path: str) -> int:
                      initial_prompt="",
                      status_cb=lambda s, p: print(f"SELFTEST: progress {p*100:.0f}%", flush=True),
                      cancel_check=lambda: False, word_timestamps=True)
-    print(f"SELFTEST: DONE chars={len(r.text)} words={len(r.words or [])}", flush=True)
+    print(f"SELFTEST: transcribe DONE chars={len(r.text)} words={len(r.words or [])}", flush=True)
+    # проверяем и диаризацию (у неё свои onnx-модели)
+    from .core import diarize
+    if diarize.is_available():
+        turns = diarize.diarize(wav, 2, status_cb=lambda s, p: None, cancel_check=lambda: False)
+        print(f"SELFTEST: diarize DONE turns={len(turns)}", flush=True)
+    else:
+        print("SELFTEST: diarize models missing", flush=True)
+    print("SELFTEST: ALL OK", flush=True)
     return 0
 
 
