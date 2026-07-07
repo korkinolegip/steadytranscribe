@@ -1,6 +1,6 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.1.0"
+#define AppVersion "1.2.1"
 #define AppPublisher "SteadyControl"
 
 [Setup]
