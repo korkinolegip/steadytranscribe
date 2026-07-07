@@ -27,5 +27,6 @@ exe = EXE(
     name="SteadyTranscribe",
     console=False,
     icon="../assets/icon.ico",
+    version="version_info.txt",
 )
 coll = COLLECT(exe, a.binaries, a.zipfiles, a.datas, name="SteadyTranscribe")

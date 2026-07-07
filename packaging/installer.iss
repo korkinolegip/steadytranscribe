@@ -1,13 +1,17 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.2.1"
-#define AppPublisher "SteadyControl"
+#define AppVersion "1.2.2"
+#define AppPublisher "Oleg Korkin (SteadyControl automation)"
+#define AppURL "https://steadycontrol.com"
 
 [Setup]
 AppId={{7E6B4A2D-9C31-4F5E-8D2A-4C7F1B9E3A60}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
+AppPublisherURL={#AppURL}
+AppSupportURL={#AppURL}
+AppContact={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 OutputBaseFilename=SteadyTranscribe-Setup-{#AppVersion}

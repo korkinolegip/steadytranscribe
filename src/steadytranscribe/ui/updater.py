@@ -12,7 +12,7 @@ import webbrowser
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import QMessageBox
 
-CURRENT_VERSION = "1.2.1"
+CURRENT_VERSION = "1.2.2"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
