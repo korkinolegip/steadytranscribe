@@ -16,12 +16,28 @@ class TranscribeError(Exception):
 
 
 @dataclass
+class Segment:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
+class Word:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
 class TranscriptionResult:
     text: str
     confidence: float       # 0..1, среднее по сегментам (как в оригинале — среднее по кускам)
     duration: float         # длительность аудио, сек
     processing_time: float  # сколько заняло распознавание, сек
     language: str = ""
+    segments: list = None   # list[Segment] — для диаризации
+    words: list = None      # list[Word] — при word_timestamps
 
 
 def models_dir() -> str:
@@ -80,12 +96,19 @@ class Transcriber:
         )
 
     def transcribe(self, wav_path: str, *, model: str, language: str, device: str,
-                   initial_prompt: str, status_cb, cancel_check) -> TranscriptionResult:
-        """status_cb(text, progress 0..1); cancel_check() -> bool."""
+                   initial_prompt: str, status_cb, cancel_check,
+                   word_timestamps: bool = False,
+                   progress_range: tuple = (0.3, 0.9)) -> TranscriptionResult:
+        """status_cb(text, progress 0..1); cancel_check() -> bool.
+
+        word_timestamps=True — вернуть также слова с таймкодами (для диаризации).
+        progress_range — куда мапить прогресс распознавания на общей шкале.
+        """
         whisper = self._load_model(model, device, status_cb)
         status_cb("Анализ файла…", 0.2)
 
         lang = None if language == "auto" else language
+        p_lo, p_hi = progress_range
         start = time.monotonic()
         segments, info = whisper.transcribe(
             wav_path,
@@ -94,25 +117,31 @@ class Transcriber:
             vad_filter=True,
             # защита от зацикливания на повторах (известная особенность Whisper)
             condition_on_previous_text=False,
+            word_timestamps=word_timestamps,
         )
         duration = float(info.duration or 0.0)
 
         parts: list[str] = []
+        seg_list: list[Segment] = []
+        word_list: list[Word] = []
         confidences: list[float] = []
         for seg in segments:  # генератор — распознавание идёт по мере итерации
             if cancel_check():
                 raise TranscribeError("Отменено пользователем.")
             parts.append(seg.text.strip())
+            seg_list.append(Segment(seg.start, seg.end, seg.text.strip()))
+            if word_timestamps and seg.words:
+                for w in seg.words:
+                    word_list.append(Word(w.start, w.end, w.word))
             if seg.avg_logprob is not None:
                 confidences.append(math.exp(min(seg.avg_logprob, 0.0)))
             if duration > 0:
-                # как в оригинале: диапазон 30–90%
                 frac = min(seg.end / duration, 1.0)
-                status_cb(f"Распознавание… {int(frac * 100)}%", 0.3 + frac * 0.6)
+                status_cb(f"Распознавание… {int(frac * 100)}%", p_lo + frac * (p_hi - p_lo))
 
         processing = time.monotonic() - start
         text = " ".join(p for p in parts if p)
         confidence = sum(confidences) / len(confidences) if confidences else 0.0
         status_cb("Готово!", 1.0)
         return TranscriptionResult(text, confidence, duration, processing,
-                                   info.language or (lang or ""))
+                                   info.language or (lang or ""), seg_list, word_list)
