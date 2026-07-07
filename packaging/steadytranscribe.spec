@@ -16,7 +16,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=["steadytranscribe", "sherpa_onnx", "soundfile", "faster_whisper"],
     hookspath=[],
-    runtime_hooks=["rthook_openmp.py"],
+    runtime_hooks=[os.path.join(SPECPATH, "rthook_openmp.py")],
     excludes=["tkinter", "matplotlib"],
     cipher=block_cipher,
 )
