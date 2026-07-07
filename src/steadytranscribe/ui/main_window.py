@@ -132,7 +132,9 @@ class MainWindow(QMainWindow):
         # при простое / при выходе / при следующем запуске (см. updater.py).
         self._installing = False            # установка уже запущена (не дублировать)
         self._auto_downloader = None
-        self._update_checker = self._start_update_flow()
+        self._update_checker = self._start_update_flow(startup=True)
+        # подтверждение после обновления: «программа обновлена до vX»
+        self._notify_if_updated()
         # таймер простоя: окно неактивно ≥10 мин и ничего не обрабатывается →
         # ставим отложенное обновление, вернёмся свёрнутыми (фокус не крадём)
         import time
@@ -149,10 +151,11 @@ class MainWindow(QMainWindow):
         self._recheck_timer.timeout.connect(
             lambda: setattr(self, "_update_checker", self._start_update_flow()))
         self._recheck_timer.start()
+        self._startup_dialog_shown = False
         # мини-обучение и базовая модель при первом запуске
         QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
 
-    def _start_update_flow(self):
+    def _start_update_flow(self, startup: bool = False):
         from ..storage import settings as settings_store
         checker = updater.UpdateChecker(self)
         auto = settings_store.load().get("auto_update", True)
@@ -160,13 +163,40 @@ class MainWindow(QMainWindow):
         # пользователь увидит ошибку и сможет обновиться кнопкой (внутри программы)
         if updater.consume_update_failed():
             auto = False
-        if auto:
-            checker.update_available.connect(self._on_update_found)
+        if startup or not auto:
+            # ПРИ ЗАПУСКЕ — честно спрашиваем: «Обновить сейчас / Позже».
+            # «Позже» → тихо скачаем в фоне и поставим при закрытии.
+            checker.update_available.connect(self._on_update_found_startup)
         else:
-            checker.update_available.connect(
-                lambda v, url: updater.UpdateDialog(v, url, self).exec())
+            # проверка в середине работы — молча качаем, поставим при закрытии
+            checker.update_available.connect(self._on_update_found)
         checker.start()
         return checker
+
+    def _on_update_found_startup(self, version: str, url: str):
+        if self._startup_dialog_shown:
+            return
+        self._startup_dialog_shown = True
+        dlg = updater.UpdateDialog(version, url, self)
+        if not dlg.exec():
+            # «Позже»: скачиваем в фоне, установится при закрытии/простое
+            self._on_update_found(version, url)
+
+    def _notify_if_updated(self):
+        """Первый запуск новой версии — подтверждаем: «обновлено до vX»."""
+        from ..storage import settings as settings_store
+        s = settings_store.load()
+        prev = s.get("last_version", "")
+        if prev == updater.CURRENT_VERSION:
+            return
+        s["last_version"] = updater.CURRENT_VERSION
+        settings_store.save(s)
+        if prev and self.tray is not None:   # prev пуст = самая первая установка
+            from PySide6.QtWidgets import QSystemTrayIcon
+            self.tray.showMessage(
+                "Программа обновлена",
+                f"Установлена версия {updater.CURRENT_VERSION}. Всё прошло успешно.",
+                QSystemTrayIcon.Information, 5000)
 
     def _on_update_found(self, version: str, url: str):
         """Авто-режим: тихо скачиваем установщик в фоне, не мешая работе."""

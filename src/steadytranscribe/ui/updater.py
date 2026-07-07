@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.4"
+CURRENT_VERSION = "1.5.5"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -273,7 +273,10 @@ class UpdateDialog(QDialog):
         lay.setSpacing(12)
         self.label = QLabel(
             f"Доступна версия <b>{version}</b> (у вас {CURRENT_VERSION}).<br>"
-            "Программа скачает и установит обновление сама, затем перезапустится.")
+            "«Обновить сейчас» — займёт пару минут: программа скачает, установит "
+            "и перезапустится сама.<br>"
+            "«Позже» — обновление тихо скачается в фоне и установится само "
+            "при закрытии программы.")
         self.label.setWordWrap(True)
         lay.addWidget(self.label)
         self.progress = QProgressBar()

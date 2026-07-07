@@ -18,6 +18,7 @@ DEFAULTS = {
     "hf_mirror": "auto",          # auto: huggingface.co → fallback hf-mirror.com
     "onboarded": False,           # мини-обучение при первом запуске показано
     "auto_update": True,          # тихо качать обновления и ставить при простое/выходе/запуске
+    "last_version": "",           # версия прошлого запуска — для уведомления «обновлено до X»
 }
 
 # Миграции старых настроек: {из_версии: функция(data) -> data}.
