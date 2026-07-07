@@ -44,8 +44,17 @@ class MainWindow(QMainWindow):
         self.resize(1000, 700)
         self.setMinimumSize(800, 500)
         icon_path = _asset("icon.png")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        app_icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
+        # системный трей — уведомление «файл готов», когда окно свёрнуто
+        from PySide6.QtWidgets import QSystemTrayIcon
+        try:
+            self.tray = QSystemTrayIcon(app_icon, self)
+            self.tray.setToolTip("SteadyTranscribe")
+            self.tray.show()
+        except Exception:  # noqa: BLE001
+            self.tray = None
 
         transcriber = Transcriber()
         self.transcribe_page = TranscribePage(transcriber)
@@ -96,7 +105,7 @@ class MainWindow(QMainWindow):
                 self.nav.addItem(item)
         self.nav.currentItemChanged.connect(self._on_nav)
         slay.addWidget(self.nav, stretch=1)
-        version = QLabel("v1.4.2 · всё локально")
+        version = QLabel("v1.4.3 · всё локально")
         version.setObjectName("tertiary")
         version.setContentsMargins(14, 8, 8, 12)
         slay.addWidget(version)

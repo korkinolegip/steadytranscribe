@@ -74,6 +74,14 @@ def update_text(entry_id: str, text: str) -> None:
         conn.execute("UPDATE entries SET text = ? WHERE id = ?", (text, entry_id))
 
 
+def rename(entry_id: str, name: str) -> None:
+    """Пользовательское название расшифровки (для понятности в истории)."""
+    if not name.strip():
+        return
+    with _connect() as conn:
+        conn.execute("UPDATE entries SET file_name = ? WHERE id = ?", (name, entry_id))
+
+
 def delete(entry_id: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))

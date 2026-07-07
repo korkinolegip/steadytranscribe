@@ -1,6 +1,6 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.4.2"
+#define AppVersion "1.4.3"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -12,7 +12,10 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
 AppContact={#AppPublisher}
-DefaultDirName={autopf}\{#AppName}
+; Установка в пользовательскую папку — БЕЗ прав администратора и БЕЗ UAC.
+; Это делает авто-обновление тихим и убирает окна безопасности при обновлении.
+PrivilegesRequired=lowest
+DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 #ifdef WITHMODEL
 OutputBaseFilename=SteadyTranscribe-Setup-{#AppVersion}-with-model
@@ -25,6 +28,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\SteadyTranscribe.exe
+; Для тихого авто-обновления: закрыть работающее приложение и не спрашивать
+CloseApplications=yes
+CloseApplicationsFilter=SteadyTranscribe.exe
+RestartApplications=no
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -43,7 +50,10 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"; Tasks:
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
 
 [Run]
+; Обычная установка: галочка «Запустить» в конце мастера.
 Filename: "{app}\SteadyTranscribe.exe"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
+; Тихое авто-обновление (/VERYSILENT): запускаем приложение сами, чтобы оно перезапустилось.
+Filename: "{app}\SteadyTranscribe.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 ; При удалении сносим ВСЮ папку приложения (в т.ч. файлы, созданные во время работы —
 ; кэш Python и пр., которые иначе не давали удалить папку) и настройки/логи.

@@ -160,15 +160,24 @@ class TranscribePage(QWidget):
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
         self.status = QLabel()
+        self.time_label = QLabel()          # прошло / осталось
+        self.time_label.setObjectName("hint")
         self.cancel_btn = QPushButton("Отменить")
         self.cancel_btn.clicked.connect(self._cancel)
         prow = QHBoxLayout()
         prow.addWidget(self.status)
         prow.addStretch()
+        prow.addWidget(self.time_label)
         prow.addWidget(self.cancel_btn)
         pc.addWidget(self.bar)
         pc.addLayout(prow)
         col.addWidget(self.progress_card)
+        # таймер реального времени для ETA
+        self._elapsed = QTimer(self)
+        self._elapsed.setInterval(1000)
+        self._elapsed.timeout.connect(self._tick)
+        self._start_time = None
+        self._last_progress = 0.0
 
         # --- ошибка ---
         self.error_card, ec = card()
@@ -186,6 +195,15 @@ class TranscribePage(QWidget):
 
         # --- результат ---
         self.result_card, rc = card("Расшифровка готова")
+        # поле имени — можно назвать расшифровку понятно (сохранится в историю)
+        name_row = QHBoxLayout()
+        name_lbl = QLabel("Название:")
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("Например: Планёрка отдела 8 июля")
+        self.name_edit.editingFinished.connect(self._rename_entry)
+        name_row.addWidget(name_lbl)
+        name_row.addWidget(self.name_edit, stretch=1)
+        rc.addLayout(name_row)
         self.stats = QLabel()
         self.stats.setObjectName("stats")
         rc.addWidget(self.stats)
@@ -230,8 +248,11 @@ class TranscribePage(QWidget):
                 or (self.diar_worker and self.diar_worker.isRunning()))
         if self.selected_file:
             self.drop_zone.hide()
-            self.file_label.setText(
-                f"📄  {os.path.basename(self.selected_file)}   ({_format_size(self.selected_file)})")
+            est = getattr(self, "_file_estimate", "")
+            txt = f"📄  {os.path.basename(self.selected_file)}   ({_format_size(self.selected_file)})"
+            if est:
+                txt += f"\n{est}"
+            self.file_label.setText(txt)
             self.file_label.show()
             self.clear_btn.show()
             self.go_btn.show()
@@ -280,7 +301,22 @@ class TranscribePage(QWidget):
         self.plain_text = self.dialogue_text = None
         self.showing_dialogue = False
         self.entry_id = None
+        # оценка длительности и времени расшифровки
+        self._file_estimate = self._estimate(path)
         self._refresh()
+
+    # приблизительный коэффициент «время расшифровки / длительность аудио» по моделям (CPU)
+    _MODEL_FACTOR = {"tiny": 0.06, "base": 0.12, "small": 0.25, "medium": 0.5,
+                     "large-v3-turbo": 0.45}
+
+    def _estimate(self, path: str) -> str:
+        dur = convert.probe_duration(path)
+        if dur <= 0:
+            return ""
+        model = settings_store.load().get("model", "large-v3-turbo")
+        est = dur * self._MODEL_FACTOR.get(model, 0.45)
+        return (f"Длительность: {self._fmt(dur)}. "
+                f"Расшифровка займёт примерно {self._fmt(est)}.")
 
     def _reset_file(self):
         self._cleanup_wav()
@@ -313,6 +349,10 @@ class TranscribePage(QWidget):
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
+        import time
+        self._start_time = time.monotonic()
+        self._last_progress = 0.0
+        self._elapsed.start()
         self.worker.start()
         self._refresh()
         self.progress_card.show()
@@ -323,12 +363,32 @@ class TranscribePage(QWidget):
                 w.cancel()
         self.status.setText("Отмена…")
 
+    @staticmethod
+    def _fmt(sec: float) -> str:
+        sec = max(int(sec), 0)
+        return f"{sec // 60}:{sec % 60:02d}"
+
+    def _tick(self):
+        import time
+        if not self._start_time:
+            return
+        elapsed = time.monotonic() - self._start_time
+        p = self._last_progress
+        if p > 0.02:
+            eta = elapsed / p * (1 - p)
+            self.time_label.setText(f"прошло {self._fmt(elapsed)} · осталось ~{self._fmt(eta)}")
+        else:
+            self.time_label.setText(f"прошло {self._fmt(elapsed)}")
+
     def _on_progress(self, status: str, value: float):
         self.status.setText(status)
         self.bar.setValue(int(value * 100))
+        self._last_progress = value
 
     def _on_done(self, result: TranscriptionResult, wav_path: str):
         self.worker = None
+        self._elapsed.stop()
+        self.time_label.setText("")
         self.wav_path = wav_path
         self.result = result
         if not result.text.strip():
@@ -337,21 +397,43 @@ class TranscribePage(QWidget):
             self._refresh()
             self._show_error("Речь не обнаружена — файл тишины или без голоса.")
             return
+        self._notify_done(os.path.basename(self.selected_file or ""))
         self.plain_text = result.text
         entry = history.add(os.path.basename(self.selected_file or ""), result.duration,
                             result.processing_time, result.confidence, result.text,
                             self.settings["model"], result.language,
                             limit=int(self.settings.get("history_limit", 50)))
         self.entry_id = entry.id if entry else None
+        self.name_edit.setText(os.path.basename(self.selected_file or ""))
         self._set_text(result.text)
         self._refresh()
         self.history_changed.emit()
 
+    def _rename_entry(self):
+        name = self.name_edit.text().strip()
+        if self.entry_id and name:
+            history.rename(self.entry_id, name)
+            self.history_changed.emit()
+
     def _on_failed(self, message: str):
         self.worker = None
         self.diar_worker = None
+        self._elapsed.stop()
+        self.time_label.setText("")
         self._refresh()
         self._show_error(message)
+
+    def _notify_done(self, name: str):
+        """Системное уведомление, если окно свёрнуто/неактивно — «файл готов»."""
+        win = self.window()
+        if win and win.isActiveWindow():
+            return
+        tray = getattr(win, "tray", None)
+        if tray is not None:
+            from PySide6.QtWidgets import QSystemTrayIcon
+            tray.showMessage("Расшифровка готова",
+                             f"Файл «{name}» распознан — можно открыть и посмотреть.",
+                             QSystemTrayIcon.Information, 5000)
 
     # ---------- диаризация по кнопке ----------
 
