@@ -1,46 +1,62 @@
-"""Отправка отчёта о проблеме: собирает лог и открывает готовый GitHub Issue.
-
-Без сервера и без вшитых токенов (публичное приложение) — пользователь жмёт
-одну кнопку «Отправить», отчёт с логом уходит в github.com/.../issues,
-где разработчик его видит.
+"""Отчёт о проблеме без привязки к GitHub: сохраняет лог в файл на Рабочий стол
+и копирует в буфер обмена — пользователь пересылает его любым удобным способом.
 """
 import os
 import platform
-import urllib.parse
-import webbrowser
 
-from ..core.resources import resource  # noqa: F401 (для единообразия)
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
+
 from ..storage.settings import app_data_dir
 
-REPO = "korkinolegip/steadytranscribe"
 
-
-def _tail(path: str, limit: int = 3000) -> str:
+def _tail(path: str, limit: int = 8000) -> str:
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()[-limit:]
     except OSError:
-        return "(нет файла)"
+        return "(файл отсутствует)"
 
 
 def collect_report(extra: str = "") -> str:
     from .updater import CURRENT_VERSION
     log = _tail(os.path.join(app_data_dir(), "log.txt"))
-    crash = _tail(os.path.join(app_data_dir(), "crash.txt"), 1500)
+    crash = _tail(os.path.join(app_data_dir(), "crash.txt"), 4000)
     return (
-        f"**Версия:** {CURRENT_VERSION}\n"
-        f"**ОС:** {platform.platform()}\n"
-        f"**Процессор:** {platform.processor()}\n\n"
-        f"**Что делал(а):**\n{extra or '(опишите, что происходило)'}\n\n"
-        f"**Лог:**\n```\n{log}\n```\n"
-        f"**Аварийный дамп:**\n```\n{crash}\n```\n")
+        f"Версия: {CURRENT_VERSION}\n"
+        f"ОС: {platform.platform()}\n"
+        f"Процессор: {platform.processor()}\n"
+        f"Что делал(а): {extra or '(не указано)'}\n"
+        f"\n===== ЛОГ =====\n{log}\n"
+        f"\n===== АВАРИЙНЫЙ ДАМП =====\n{crash}\n")
+
+
+def _desktop() -> str:
+    home = os.path.expanduser("~")
+    for name in ("Desktop", "Рабочий стол"):
+        p = os.path.join(home, name)
+        if os.path.isdir(p):
+            return p
+    return home
 
 
 def send_report(parent=None, extra: str = "", title: str = "Отчёт о проблеме") -> None:
-    """Открывает предзаполненный GitHub Issue с логом."""
-    body = collect_report(extra)
-    # GitHub ограничивает длину URL — режем тело под ~7000 символов
-    body = body[:7000]
-    url = (f"https://github.com/{REPO}/issues/new?"
-           + urllib.parse.urlencode({"title": title, "body": body, "labels": "bug"}))
-    webbrowser.open(url)
+    """Сохраняет отчёт в файл (диалог сохранения, по умолчанию — Рабочий стол)
+    и копирует его в буфер обмена."""
+    report = collect_report(extra)
+    QApplication.clipboard().setText(report)
+
+    default = os.path.join(_desktop(), "SteadyTranscribe-отчёт.txt")
+    path, _ = QFileDialog.getSaveFileName(
+        parent, "Сохранить отчёт о проблеме", default, "Текст (*.txt)")
+    if path:
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(report)
+        except OSError:
+            path = None
+
+    msg = ("Отчёт скопирован в буфер обмена"
+           + (f"\nи сохранён в файл:\n{path}" if path else "")
+           + "\n\nПришлите его разработчику любым удобным способом "
+             "(мессенджер, почта).")
+    QMessageBox.information(parent, "Отчёт готов", msg)

@@ -44,7 +44,7 @@ def main():
         from .ui import feedback
         box = QMessageBox(QMessageBox.Critical, "Ошибка SteadyTranscribe",
                           f"Произошла ошибка. Приложение продолжит работу.\n\n{exc_value}")
-        send = box.addButton("Отправить отчёт разработчику", QMessageBox.AcceptRole)
+        send = box.addButton("Сохранить отчёт", QMessageBox.AcceptRole)
         box.addButton("Закрыть", QMessageBox.RejectRole)
         box.exec()
         if box.clickedButton() is send:

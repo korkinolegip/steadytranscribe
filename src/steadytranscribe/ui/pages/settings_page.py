@@ -112,11 +112,10 @@ class SettingsPage(QWidget):
 
         # --- Помощь / отчёт о проблеме ---
         box5, lay5 = card("Помощь")
-        report_btn = QPushButton("🐞 Сообщить о проблеме (отправить лог)")
+        report_btn = QPushButton("🐞 Сообщить о проблеме")
         report_btn.clicked.connect(self._report)
         lay5.addWidget(report_btn)
-        hint5 = QLabel("Откроется страница с уже заполненным отчётом (версия, система, лог). "
-                       "Нажмите «Create» — разработчик увидит проблему и починит.")
+        hint5 = QLabel("Отчёт (версия, система, лог) сохранится в файл на Рабочем столе и скопируется в буфер — пришлите его разработчику любым способом.")
         hint5.setObjectName("hint")
         hint5.setWordWrap(True)
         lay5.addWidget(hint5)
