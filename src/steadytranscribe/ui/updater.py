@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-CURRENT_VERSION = "1.4.4"
+CURRENT_VERSION = "1.5.0"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -164,7 +164,15 @@ class UpdateDialog(QDialog):
         self.status.setText(f"⚠️ {msg}")
 
 
+def run_installer_silent(installer_path: str) -> None:
+    """Запустить установщик обновления тихо (/VERYSILENT), не привязывая к job —
+    он должен пережить закрытие приложения и обновить его."""
+    subprocess.Popen([installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
 def check_async(parent) -> UpdateChecker:
+    """Ручная/явная проверка: показывает диалог с кнопкой «Обновить сейчас»."""
     checker = UpdateChecker(parent)
     checker.update_available.connect(
         lambda version, url: UpdateDialog(version, url, parent).exec())

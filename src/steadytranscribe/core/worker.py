@@ -28,7 +28,7 @@ class TranscriptionWorker(QThread):
         wav = None
         try:
             self.progress.emit("Подготовка…", 0.05)
-            wav = convert.to_wav16k(self._file_path)
+            wav = convert.to_wav16k(self._file_path, cancel_check=lambda: self._cancelled)
             if self._cancelled:
                 raise TranscribeError("Отменено пользователем.")
             result: TranscriptionResult = self._transcriber.transcribe(
@@ -103,6 +103,8 @@ class DiarizationWorker(QThread):
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", env=env,
                 creationflags=flags)
+            from . import jobkill
+            jobkill.assign(self._proc.pid)   # умрёт вместе с приложением — без сирот
             turns_raw = None
             for line in self._proc.stdout:
                 if self._cancelled:
@@ -115,6 +117,9 @@ class DiarizationWorker(QThread):
                 elif line.startswith("RESULT "):
                     turns_raw = json.loads(line[7:])
             self._proc.wait()
+            if self._cancelled:
+                self.failed.emit("Отменено пользователем.")
+                return
             if turns_raw is None:
                 raise RuntimeError("не удалось выполнить разделение")
             turns = [diarize.SpeakerTurn(sp, st, en) for sp, st, en in turns_raw]

@@ -16,6 +16,7 @@ from . import onboarding, updater
 
 def _asset(name: str) -> str:
     return resource("assets", name)
+from .pages.help_page import HelpPage
 from .pages.history_page import HistoryPage
 from .pages.models import ModelsPage
 from .pages.settings_page import SettingsPage
@@ -28,6 +29,7 @@ APP_TITLE = "Транскрипция SteadyControl"
 SIDEBAR = [
     ("ИСПОЛЬЗОВАНИЕ", None, None),
     (None, "📄  Расшифровка файлов", 0),
+    (None, "❓  Как пользоваться", 5),
     ("НАСТРОЙКА", None, None),
     (None, "🧠  Модели", 1),
     (None, "⚙️  Настройки", 2),
@@ -62,6 +64,7 @@ class MainWindow(QMainWindow):
         self.settings_page = SettingsPage()
         self.history_page = HistoryPage()
         self.stats_page = StatsPage()
+        self.help_page = HelpPage()
         self.transcribe_page.history_changed.connect(self.history_page.refresh)
         self.transcribe_page.history_changed.connect(self.stats_page.refresh)
 
@@ -105,7 +108,7 @@ class MainWindow(QMainWindow):
                 self.nav.addItem(item)
         self.nav.currentItemChanged.connect(self._on_nav)
         slay.addWidget(self.nav, stretch=1)
-        version = QLabel("v1.4.4 · всё локально")
+        version = QLabel(f"v{updater.CURRENT_VERSION} · всё локально")
         version.setObjectName("tertiary")
         version.setContentsMargins(14, 8, 8, 12)
         slay.addWidget(version)
@@ -114,7 +117,7 @@ class MainWindow(QMainWindow):
         # страницы
         self.stack = QStackedWidget()
         for page in (self.transcribe_page, self.models_page, self.settings_page,
-                     self.history_page, self.stats_page):
+                     self.history_page, self.stats_page, self.help_page):
             self.stack.addWidget(page)
         lay.addWidget(self.stack, stretch=1)
         self.setCentralWidget(root)
@@ -125,11 +128,46 @@ class MainWindow(QMainWindow):
                 self.nav.setCurrentRow(i)
                 break
 
-        # тихая проверка обновлений при запуске
-        self._update_checker = updater.check_async(self)
+        # обновления: если включено авто-обновление (по умолчанию) — тихо скачиваем
+        # в фоне и ставим при закрытии; иначе показываем диалог с кнопкой.
+        self._pending_installer = None      # путь к скачанному установщику
+        self._auto_downloader = None
+        self._update_checker = self._start_update_flow()
         # мини-обучение и базовая модель при первом запуске
         from PySide6.QtCore import QTimer
         QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
+
+    def _start_update_flow(self):
+        from ..storage import settings as settings_store
+        checker = updater.UpdateChecker(self)
+        auto = settings_store.load().get("auto_update", True)
+        if auto:
+            checker.update_available.connect(self._on_update_found)
+        else:
+            checker.update_available.connect(
+                lambda v, url: updater.UpdateDialog(v, url, self).exec())
+        checker.start()
+        return checker
+
+    def _on_update_found(self, version: str, url: str):
+        """Авто-режим: тихо скачиваем установщик в фоне, не мешая работе."""
+        self._new_version = version
+        self._auto_downloader = updater.InstallerDownloader(url, self)
+        self._auto_downloader.done.connect(self._on_installer_ready)
+        # ошибки скачивания игнорируем тихо — повторим при следующем запуске
+        self._auto_downloader.start()
+
+    def _on_installer_ready(self, installer_path: str):
+        """Установщик скачан. Ставим при закрытии, чтобы не прерывать работу.
+        Пользователю — деликатное уведомление, что обновление готово."""
+        self._pending_installer = installer_path
+        if self.tray is not None:
+            from PySide6.QtWidgets import QSystemTrayIcon
+            ver = getattr(self, "_new_version", "")
+            self.tray.showMessage(
+                "Обновление готово",
+                f"Версия {ver} загружена и установится сама, когда вы закроете программу.",
+                QSystemTrayIcon.Information, 6000)
 
     def _on_nav(self, current: QListWidgetItem, _prev):
         if current is None:
@@ -159,12 +197,27 @@ class MainWindow(QMainWindow):
         for w in busy:
             w.cancel()
             w.wait(4000)
-        if self._update_checker.isRunning():
+        if self._update_checker and self._update_checker.isRunning():
             self._update_checker.wait(1000)
+        if self._auto_downloader and self._auto_downloader.isRunning():
+            self._auto_downloader.cancel()
+            self._auto_downloader.wait(1000)
         # потоки скачивания моделей
         for row in getattr(self.models_page, "rows", []):
             if row.worker and row.worker.isRunning():
                 row.worker.cancel_event.set()
                 row.worker.wait(2000)
         self.transcribe_page._cleanup_wav()
+
+        # СТРАХОВКА ОТ СИРОТ: принудительно валим все дочерние процессы
+        # (ffmpeg, разделение собеседников) — чтобы после закрытия ничего не висело.
+        from ..core import jobkill
+        jobkill.kill_all()
+
+        # Тихо ставим скачанное обновление — уже на выходе, работе не мешаем.
+        if self._pending_installer and os.path.exists(self._pending_installer):
+            try:
+                updater.run_installer_silent(self._pending_installer)
+            except Exception:  # noqa: BLE001
+                pass
         event.accept()

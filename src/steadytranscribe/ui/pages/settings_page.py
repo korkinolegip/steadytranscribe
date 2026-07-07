@@ -3,7 +3,7 @@ import webbrowser
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
     QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
@@ -117,8 +117,13 @@ class SettingsPage(QWidget):
         urow.addWidget(check_btn)
         urow.addWidget(page_btn)
         lay4.addLayout(urow)
-        hint4 = QLabel("Программа сама проверяет обновления при запуске. "
-                       "Когда выйдет новая версия — предложит скачать и установит сама.")
+        self.auto_update_chk = QCheckBox("Обновлять автоматически")
+        self.auto_update_chk.setChecked(bool(s.get("auto_update", True)))
+        self.auto_update_chk.toggled.connect(self._save)
+        lay4.addWidget(self.auto_update_chk)
+        hint4 = QLabel("При запуске программа проверяет обновления. Если включено — "
+                       "новая версия тихо скачивается в фоне и устанавливается сама, "
+                       "когда вы закрываете программу (работе не мешает, кликать не нужно).")
         hint4.setObjectName("hint")
         hint4.setWordWrap(True)
         lay4.addWidget(hint4)
@@ -167,6 +172,7 @@ class SettingsPage(QWidget):
             "language": self.lang_box.currentData(),
             "initial_prompt": self.prompt_edit.toPlainText().strip(),
             "history_limit": self.history_spin.value(),
+            "auto_update": self.auto_update_chk.isChecked(),
         })
         store.save(s)
 

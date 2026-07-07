@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 SUPPORTED_EXTENSIONS = {
     "wav", "mp3", "m4a", "aac", "ogg", "opus", "flac", "wma",
@@ -47,8 +48,12 @@ def probe_duration(path: str) -> float:
         return 0.0
 
 
-def to_wav16k(path: str) -> str:
-    """Конвертирует файл в 16 кГц mono WAV во временную папку. Возвращает путь."""
+def to_wav16k(path: str, cancel_check=None) -> str:
+    """Конвертирует файл в 16 кГц mono WAV во временную папку. Возвращает путь.
+
+    cancel_check() -> bool: если возвращает True — процесс ffmpeg немедленно
+    завершается (чтобы «Отмена» работала мгновенно даже на больших файлах).
+    """
     if not os.path.exists(path):
         raise ConvertError("Файл не найден.")
     if not is_supported(path):
@@ -62,15 +67,30 @@ def to_wav16k(path: str) -> str:
         wav_path,
     ]
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=1800,
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except FileNotFoundError:
         raise ConvertError("ffmpeg не найден. Переустановите приложение.")
-    except subprocess.TimeoutExpired:
-        raise ConvertError("Конвертация заняла слишком много времени.")
-    if result.returncode != 0 or not os.path.getsize(wav_path):
-        err = (result.stderr or "").strip().splitlines()
+    from . import jobkill
+    jobkill.assign(proc.pid)   # умрёт вместе с приложением — без сирот
+    deadline = time.monotonic() + 1800
+    while True:
+        try:
+            proc.wait(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            if cancel_check and cancel_check():
+                proc.kill()
+                proc.wait(timeout=5)
+                raise ConvertError("Отменено пользователем.")
+            if time.monotonic() > deadline:
+                proc.kill()
+                proc.wait(timeout=5)
+                raise ConvertError("Конвертация заняла слишком много времени.")
+    stderr = (proc.stderr.read() if proc.stderr else "") or ""
+    if proc.returncode != 0 or not os.path.getsize(wav_path):
+        err = stderr.strip().splitlines()
         raise ConvertError("Не удалось обработать аудио: " + (err[-1] if err else "неизвестная ошибка"))
     return wav_path

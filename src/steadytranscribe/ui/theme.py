@@ -45,6 +45,11 @@ QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border:
 #subtitle, #hint {{ color: {TEXT_SECONDARY}; font-size: 12px; }}
 #tertiary {{ color: {TEXT_TERTIARY}; font-size: 12px; }}
 #stats {{ color: {TEXT_SECONDARY}; font-size: 12px; }}
+#warn {{ color: {WARNING}; font-size: 12px; font-weight: 600; }}
+QCheckBox {{ spacing: 8px; }}
+QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 5px;
+    border: 1px solid {SEPARATOR}; background: {CARD_BG_ELEVATED}; }}
+QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
 #bigValue {{ font-size: 30px; font-weight: 700; }}
 #tileTitle {{ color: {TEXT_SECONDARY}; font-size: 11px; font-weight: 600; }}
 
@@ -120,4 +125,36 @@ QComboBox QAbstractItemView {{ background: {CARD_BG_ELEVATED}; border: 1px solid
     border-radius: 8px; font-weight: 600;
 }}
 QSplitter::handle {{ background: {BORDER}; width: 1px; }}
+
+/* ---------- Раздел «Как пользоваться» ---------- */
+#hero {{
+    border-radius: 20px; padding: 26px;
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 rgba(58,200,198,0.22), stop:1 rgba(59,130,246,0.14));
+    border: 1px solid {BORDER};
+}}
+#heroTitle {{ font-size: 26px; font-weight: 800; }}
+#heroSub {{ color: {TEXT}; font-size: 14px; }}
+#sectionTitle {{ font-size: 18px; font-weight: 700; }}
+#stepCard {{
+    background: {CARD_BG}; border: 1px solid {BORDER}; border-radius: 16px; padding: 6px;
+}}
+#stepBadge {{
+    background: {ACCENT}; color: #06282a; font-weight: 800; font-size: 15px;
+    border-radius: 15px; min-width: 30px; max-width: 30px; min-height: 30px; max-height: 30px;
+    qproperty-alignment: AlignCenter;
+}}
+#stepEmoji {{ font-size: 34px; }}
+#stepTitle {{ font-size: 15px; font-weight: 700; }}
+#arrow {{ color: {ACCENT}; font-size: 24px; font-weight: 800; }}
+#feature {{
+    background: {CARD_BG}; border: 1px solid {BORDER}; border-radius: 14px; padding: 4px;
+}}
+#feature:hover {{ border-color: {ACCENT}; background: {CARD_BG_ELEVATED}; }}
+#featIcon {{ font-size: 26px; }}
+#featTitle {{ font-size: 14px; font-weight: 700; }}
+#chip {{
+    background: rgba(58,200,198,0.16); color: {ACCENT};
+    border-radius: 10px; padding: 4px 10px; font-weight: 600; font-size: 12px;
+}}
 """

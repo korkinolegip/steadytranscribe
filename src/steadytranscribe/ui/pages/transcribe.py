@@ -19,8 +19,11 @@ from PySide6.QtWidgets import (
 from ...core import convert, diarize
 from ...core.transcriber import Transcriber, TranscriptionResult
 from ...core.worker import DiarizationWorker, TranscriptionWorker
-from ...storage import history, settings as settings_store
+from ...storage import history, settings as settings_store, timings
 from ..widgets import card
+
+# ниже этого порога уверенности расшифровку помечаем «проверьте текст»
+LOW_CONFIDENCE = 0.6
 
 
 def _format_size(path: str) -> str:
@@ -99,7 +102,9 @@ class TranscribePage(QWidget):
         self.worker: TranscriptionWorker | None = None
         self.diar_worker: DiarizationWorker | None = None
         self.selected_file: str | None = None
+        self.result_name: str | None = None       # имя файла, сохраняется после авто-очистки
         self.result: TranscriptionResult | None = None
+        self._est_total: float = 0.0              # текущая оценка длительности операции, сек
         self.wav_path: str | None = None          # для диаризации после расшифровки
         self.plain_text: str | None = None        # исходный текст (без разделения)
         self.dialogue_text: str | None = None     # текст по собеседникам
@@ -207,6 +212,13 @@ class TranscribePage(QWidget):
         self.stats = QLabel()
         self.stats.setObjectName("stats")
         rc.addWidget(self.stats)
+        # предупреждение, если распознавание неуверенное — пользователю стоит проверить текст
+        self.lowconf = QLabel("⚠️  Распознавание неуверенное — проверьте текст, "
+                              "местами возможны ошибки.")
+        self.lowconf.setObjectName("warn")
+        self.lowconf.setWordWrap(True)
+        self.lowconf.hide()
+        rc.addWidget(self.lowconf)
 
         btns = QHBoxLayout()
         self.copy_btn = QPushButton("📋 Копировать")
@@ -271,8 +283,11 @@ class TranscribePage(QWidget):
         self.result_card.setVisible(has_result)
         if has_result:
             speed = self.result.duration / self.result.processing_time if self.result.processing_time else 0
+            words = len((self.result.text or "").split())
             self.stats.setText(
-                f"🕐 {self.result.duration:.1f} с    ✅ {self.result.confidence * 100:.0f}%    ⚡ {speed:.1f}×")
+                f"🕐 {self._fmt_long(self.result.duration)}    📝 {words} слов    "
+                f"✅ {self.result.confidence * 100:.0f}%    ⚡ {speed:.1f}×")
+            self.lowconf.setVisible(self.result.confidence < LOW_CONFIDENCE)
             can_split = diarize.is_available() and self.wav_path and not busy
             self.split_btn.setVisible(bool(can_split) and self.dialogue_text is None)
             self.names_btn.setVisible(self.dialogue_text is not None and self.showing_dialogue)
@@ -298,31 +313,35 @@ class TranscribePage(QWidget):
         self._cleanup_wav()
         self.selected_file = path
         self.result = None
+        self.result_name = None
         self.plain_text = self.dialogue_text = None
+        self._original_text = ""
         self.showing_dialogue = False
         self.entry_id = None
         # оценка длительности и времени расшифровки
         self._file_estimate = self._estimate(path)
         self._refresh()
 
-    # приблизительный коэффициент «время расшифровки / длительность аудио» по моделям (CPU)
-    _MODEL_FACTOR = {"tiny": 0.06, "base": 0.12, "small": 0.25, "medium": 0.5,
-                     "large-v3-turbo": 0.45}
-
     def _estimate(self, path: str) -> str:
+        """Оценка времени расшифровки. Коэффициент берётся из базы времён —
+        со временем, накопив реальные замеры, прогноз становится точным."""
         dur = convert.probe_duration(path)
+        self._est_seconds = 0.0
         if dur <= 0:
             return ""
         model = settings_store.load().get("model", "large-v3-turbo")
-        est = dur * self._MODEL_FACTOR.get(model, 0.45)
-        return (f"Длительность: {self._fmt(dur)}. "
-                f"Расшифровка займёт примерно {self._fmt(est)}.")
+        est = timings.estimate_transcription(model, dur)
+        self._est_seconds = est
+        return (f"Длительность: {self._fmt_long(dur)}. "
+                f"Расшифровка займёт примерно {self._fmt_long(est)}.")
 
     def _reset_file(self):
         self._cleanup_wav()
         self.selected_file = None
         self.result = None
+        self.result_name = None
         self.plain_text = self.dialogue_text = None
+        self._original_text = ""
         self.showing_dialogue = False
         self.entry_id = None
         self._refresh()
@@ -352,21 +371,38 @@ class TranscribePage(QWidget):
         import time
         self._start_time = time.monotonic()
         self._last_progress = 0.0
+        self._est_total = getattr(self, "_est_seconds", 0.0) or 60.0
+        self.cancel_btn.setEnabled(True)
         self._elapsed.start()
         self.worker.start()
         self._refresh()
         self.progress_card.show()
 
     def _cancel(self):
+        # мгновенная реакция: гасим кнопку и сразу шлём сигнал отмены
+        # (ffmpeg убивается принудительно, процесс разделения — тоже)
+        self.cancel_btn.setEnabled(False)
+        self.status.setText("Отмена…")
         for w in (self.worker, self.diar_worker):
             if w:
                 w.cancel()
-        self.status.setText("Отмена…")
 
     @staticmethod
     def _fmt(sec: float) -> str:
         sec = max(int(sec), 0)
         return f"{sec // 60}:{sec % 60:02d}"
+
+    @staticmethod
+    def _fmt_long(sec: float) -> str:
+        """Человеческий формат: «11 мин 15 с», «45 с», «1 ч 3 мин»."""
+        sec = max(int(round(sec)), 0)
+        h, rem = divmod(sec, 3600)
+        m, s = divmod(rem, 60)
+        if h:
+            return f"{h} ч {m} мин" if m else f"{h} ч"
+        if m:
+            return f"{m} мин {s} с" if s else f"{m} мин"
+        return f"{s} с"
 
     def _tick(self):
         import time
@@ -382,11 +418,15 @@ class TranscribePage(QWidget):
 
         elapsed = time.monotonic() - self._start_time
         p = self._last_progress
-        if p > 0.02:
-            eta = elapsed / p * (1 - p)
-            self.time_label.setText(f"прошло {self._fmt(elapsed)} · осталось ~{self._fmt(eta)}")
-        else:
-            self.time_label.setText(f"прошло {self._fmt(elapsed)}")
+        # СТАБИЛЬНЫЙ ETA: не считаем «остаток» по мгновенному проценту (он скачет),
+        # а ведём обратный отсчёт от предварительной оценки и МЯГКО подтягиваем её
+        # к факту (EMA). Так цифра плавно уменьшается, а не прыгает вверх-вниз.
+        if p > 0.05 and self._est_total > 0:
+            measured = elapsed / p
+            self._est_total += 0.15 * (measured - self._est_total)
+        remaining = max(self._est_total - elapsed, 1.0)
+        self.time_label.setText(
+            f"прошло {self._fmt(elapsed)} · осталось ~{self._fmt(remaining)}")
 
     def _on_progress(self, status: str, value: float):
         self.status.setText(status)
@@ -399,21 +439,31 @@ class TranscribePage(QWidget):
         self.time_label.setText("")
         self.wav_path = wav_path
         self.result = result
+        name = os.path.basename(self.selected_file or "")
         if not result.text.strip():
             self.result = None
             self._cleanup_wav()
-            self._refresh()
+            self._reset_file()
             self._show_error("Речь не обнаружена — файл тишины или без голоса.")
             return
-        self._notify_done(os.path.basename(self.selected_file or ""))
+        # запоминаем реальное время расшифровки — прогноз следующих файлов точнее
+        timings.record_transcription(self.settings["model"], result.duration,
+                                     result.processing_time)
+        self._notify_done(name)
         self.plain_text = result.text
-        entry = history.add(os.path.basename(self.selected_file or ""), result.duration,
+        self._original_text = result.text     # для «правки → словарь»
+        entry = history.add(name, result.duration,
                             result.processing_time, result.confidence, result.text,
                             self.settings["model"], result.language,
                             limit=int(self.settings.get("history_limit", 50)))
         self.entry_id = entry.id if entry else None
-        self.name_edit.setText(os.path.basename(self.selected_file or ""))
+        self.name_edit.setText(name)
         self._set_text(result.text)
+        # АВТО-ОЧИСТКА: файл больше не нужен — убираем его, чтобы можно было сразу
+        # перетащить следующий (расшифровка уже готова и показана ниже).
+        self.result_name = name
+        self.selected_file = None
+        self._file_estimate = ""
         self._refresh()
         self.history_changed.emit()
 
@@ -428,7 +478,11 @@ class TranscribePage(QWidget):
         self.diar_worker = None
         self._elapsed.stop()
         self.time_label.setText("")
+        self.cancel_btn.setEnabled(True)
         self._refresh()
+        # отмена — это не ошибка: тихо возвращаемся, без красной плашки
+        if "Отменено" in message:
+            return
         self._show_error(message)
 
     def _notify_done(self, name: str):
@@ -459,12 +513,26 @@ class TranscribePage(QWidget):
         self.diar_worker.progress.connect(self._on_progress)
         self.diar_worker.finished_ok.connect(self._on_diarized)
         self.diar_worker.failed.connect(self._on_failed)
+        # таймер прошло/осталось — разделение тоже небыстрое, показываем прогресс времени
+        import time
+        self._start_time = time.monotonic()
+        self._last_progress = 0.0
+        self._est_total = timings.estimate_diarization(self.result.duration or 0) or 30.0
+        self.cancel_btn.setEnabled(True)
+        self._elapsed.start()
         self.diar_worker.start()
         self._refresh()
         self.progress_card.show()
 
     def _on_diarized(self, dialogue: str):
         self.diar_worker = None
+        self._elapsed.stop()
+        self.time_label.setText("")
+        # запоминаем время разделения — прогноз следующих файлов точнее
+        if self._start_time and self.result:
+            import time
+            timings.record_diarization(self.result.duration or 0,
+                                       time.monotonic() - self._start_time)
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
@@ -513,15 +581,54 @@ class TranscribePage(QWidget):
         if self.entry_id:
             history.update_text(self.entry_id, self._current_text())
             self.history_changed.emit()
-            self.toast.setText("Сохранено в историю")
+            added = self._learn_from_edits()
+            msg = f"Сохранено · +{added} слов в словарь" if added else "Сохранено в историю"
+            self.toast.setText(msg)
             self.toast.adjustSize()
             self.toast.move(self.width() - self.toast.width() - 24, 12)
             self.toast.show()
-            QTimer.singleShot(2000, lambda: (self.toast.hide(), self.toast.setText("Скопировано!")))
+            QTimer.singleShot(2500, lambda: (self.toast.hide(), self.toast.setText("Скопировано!")))
+
+    def _learn_from_edits(self) -> int:
+        """Слова, которые пользователь вписал/исправил вручную (и которых не было в
+        исходном распознавании), добавляем в словарь — имена, названия, термины.
+        Так программа запомнит правильное написание для будущих расшифровок."""
+        original = getattr(self, "_original_text", "") or ""
+        edited = self.plain_text or ""
+        if not original or not edited:
+            return 0
+
+        def tokens(text):
+            return re.findall(r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\-]{2,}", text)
+
+        orig_lower = {w.lower() for w in tokens(original)}
+        new_words = []
+        for w in tokens(edited):
+            if w.lower() in orig_lower:
+                continue
+            # берём только то, что похоже на имя/название/термин, а не обычное слово:
+            # с заглавной буквы, латиница (бренды) или CamelCase
+            looks_named = (w[0].isupper() or re.search(r"[A-Za-z]", w)
+                           or any(c.isupper() for c in w[1:]))
+            if looks_named and w not in new_words:
+                new_words.append(w)
+        new_words = new_words[:15]
+        if not new_words:
+            return 0
+
+        s = settings_store.load()
+        existing = [x.strip() for x in re.split(r"[\n,]", s.get("initial_prompt", "")) if x.strip()]
+        existing_lower = {x.lower() for x in existing}
+        fresh = [w for w in new_words if w.lower() not in existing_lower]
+        if not fresh:
+            return 0
+        s["initial_prompt"] = "\n".join(existing + fresh)
+        settings_store.save(s)
+        return len(fresh)
 
     def _export_result(self):
-        if self.result and self.selected_file:
-            export_transcription(self, os.path.basename(self.selected_file),
+        if self.result and self.result_name:
+            export_transcription(self, self.result_name,
                                  self._current_text(), self.result.duration,
                                  self.result.processing_time, self.result.confidence,
                                  datetime.now())
