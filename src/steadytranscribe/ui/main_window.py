@@ -142,9 +142,10 @@ class MainWindow(QMainWindow):
         self._idle_timer.setInterval(30_000)
         self._idle_timer.timeout.connect(self._idle_tick)
         self._idle_timer.start()
-        # повторная проверка обновлений раз в 4 часа (программу держат открытой днями)
+        # повторная проверка обновлений раз в час (программу держат открытой днями;
+        # 4 часа было слишком редко — обновление, вышедшее после запуска, «не доходило»)
         self._recheck_timer = QTimer(self)
-        self._recheck_timer.setInterval(4 * 3600 * 1000)
+        self._recheck_timer.setInterval(3600 * 1000)
         self._recheck_timer.timeout.connect(
             lambda: setattr(self, "_update_checker", self._start_update_flow()))
         self._recheck_timer.start()
