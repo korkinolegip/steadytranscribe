@@ -29,9 +29,9 @@ class ModelInfo:
 CATALOG = [
     ModelInfo("tiny", "Tiny", 75, 100, 55, "Черновик, максимум скорости"),
     ModelInfo("base", "Base", 145, 90, 65, "Быстрая"),
-    ModelInfo("small", "Small", 480, 70, 80, "Баланс — рекомендуется для начала"),
+    ModelInfo("small", "Small", 480, 70, 80, "Баланс скорости и качества"),
     ModelInfo("medium", "Medium", 1500, 40, 90, "Высокое качество"),
-    ModelInfo("large-v3-turbo", "Large v3 Turbo", 1600, 35, 100, "Максимальное качество русского"),
+    ModelInfo("large-v3-turbo", "Large v3 Turbo", 1600, 35, 100, "Максимальное качество — рекомендуется"),
 ]
 
 

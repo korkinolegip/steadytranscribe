@@ -66,6 +66,14 @@ def list_entries() -> list[Entry]:
     return [Entry(*row) for row in rows]
 
 
+def update_text(entry_id: str, text: str) -> None:
+    """Сохранение правок пользователя (редактирование, разделение, имена)."""
+    if not text.strip():
+        return
+    with _connect() as conn:
+        conn.execute("UPDATE entries SET text = ? WHERE id = ?", (text, entry_id))
+
+
 def delete(entry_id: str) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM entries WHERE id = ?", (entry_id,))

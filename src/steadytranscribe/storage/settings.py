@@ -4,7 +4,7 @@ import os
 import sys
 
 DEFAULTS = {
-    "model": "small",             # tiny | base | small | medium | large-v3-turbo
+    "model": "large-v3-turbo",    # по умолчанию максимальное качество (как согласовано)
     "language": "auto",           # auto | ru | en | ...
     "device": "auto",             # auto | cpu | cuda
     "initial_prompt": "",         # словарь-подсказка: имена, термины (напр. SteadyControl)
@@ -16,9 +16,9 @@ MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3-turbo"]
 MODEL_LABELS = {
     "tiny": "Tiny — самая быстрая, черновое качество (~75 МБ)",
     "base": "Base — быстрая (~145 МБ)",
-    "small": "Small — баланс скорости и качества (~480 МБ, рекомендуется)",
+    "small": "Small — баланс скорости и качества (~480 МБ)",
     "medium": "Medium — высокое качество, медленнее (~1.5 ГБ)",
-    "large-v3-turbo": "Large v3 Turbo — максимальное качество (~1.6 ГБ)",
+    "large-v3-turbo": "Large v3 Turbo — максимальное качество (~1.6 ГБ, рекомендуется)",
 }
 LANGUAGE_CHOICES = [("auto", "Автоопределение"), ("ru", "Русский"), ("en", "English"),
                     ("uk", "Українська"), ("de", "Deutsch"), ("es", "Español"), ("fr", "Français")]

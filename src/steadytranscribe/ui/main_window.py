@@ -136,12 +136,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self._update_checker.isRunning():
             self._update_checker.wait(500)
-        w = self.transcribe_page.worker
-        if w and w.isRunning():
-            if QMessageBox.question(self, APP_TITLE,
-                                    "Идёт расшифровка. Прервать и выйти?") != QMessageBox.Yes:
-                event.ignore()
-                return
-            w.cancel()
-            w.wait(3000)
+        for w in (self.transcribe_page.worker, self.transcribe_page.diar_worker):
+            if w and w.isRunning():
+                if QMessageBox.question(self, APP_TITLE,
+                                        "Идёт обработка. Прервать и выйти?") != QMessageBox.Yes:
+                    event.ignore()
+                    return
+                w.cancel()
+                w.wait(3000)
+        self.transcribe_page._cleanup_wav()
         event.accept()

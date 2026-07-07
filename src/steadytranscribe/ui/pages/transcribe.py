@@ -1,18 +1,24 @@
-"""Страница «Расшифровка файлов» — карточки как в оригинале."""
+"""Страница «Расшифровка файлов».
+
+UX: файл → чистый текст. На готовом результате — кнопка «Разделить по собеседникам»,
+редактирование текста, имена собеседников, сохранение правок в историю.
+"""
 import json
 import os
+import re
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
-    QProgressBar, QPushButton, QScrollArea, QTextEdit, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+    QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton, QScrollArea,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from ...core import convert, diarize
 from ...core.transcriber import Transcriber, TranscriptionResult
-from ...core.worker import TranscriptionWorker
+from ...core.worker import DiarizationWorker, TranscriptionWorker
 from ...storage import history, settings as settings_store
 from ..widgets import card
 
@@ -26,6 +32,62 @@ def _format_size(path: str) -> str:
     return f"{size:.1f} ТБ"
 
 
+class SpeakerCountDialog(QDialog):
+    """Сколько собеседников на записи (для точного разделения)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Разделить по собеседникам")
+        lay = QVBoxLayout(self)
+        hint = QLabel("Укажите, сколько человек говорит на записи —\n"
+                      "так разделение будет точнее.")
+        hint.setObjectName("hint")
+        lay.addWidget(hint)
+        self.box = QComboBox()
+        self.box.addItem("Определить автоматически", 0)
+        for n in range(2, 9):
+            self.box.addItem(f"{n}", n)
+        self.box.setCurrentIndex(1)  # чаще всего известно: 2
+        form = QFormLayout()
+        form.addRow("Собеседников:", self.box)
+        lay.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Разделить")
+        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def value(self) -> int:
+        return self.box.currentData()
+
+
+class SpeakerNamesDialog(QDialog):
+    """Переименование «Собеседник N» в реальные имена."""
+
+    def __init__(self, speakers: list[str], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Имена собеседников")
+        lay = QVBoxLayout(self)
+        form = QFormLayout()
+        self.edits: dict[str, QLineEdit] = {}
+        for sp in speakers:
+            edit = QLineEdit()
+            edit.setPlaceholderText("Например: Ирина")
+            form.addRow(f"{sp}:", edit)
+            self.edits[sp] = edit
+        lay.addLayout(form)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Применить")
+        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+    def mapping(self) -> dict[str, str]:
+        return {sp: e.text().strip() for sp, e in self.edits.items() if e.text().strip()}
+
+
 class TranscribePage(QWidget):
     history_changed = Signal()
 
@@ -33,11 +95,19 @@ class TranscribePage(QWidget):
         super().__init__()
         self.transcriber = transcriber
         self.worker: TranscriptionWorker | None = None
+        self.diar_worker: DiarizationWorker | None = None
         self.selected_file: str | None = None
         self.result: TranscriptionResult | None = None
+        self.wav_path: str | None = None          # для диаризации после расшифровки
+        self.plain_text: str | None = None        # исходный текст (без разделения)
+        self.dialogue_text: str | None = None     # текст по собеседникам
+        self.showing_dialogue = False
+        self.entry_id: str | None = None          # запись в истории для сохранения правок
         self.setAcceptDrops(True)
         self._build()
         self._refresh()
+
+    # ---------- интерфейс ----------
 
     def _build(self):
         outer = QVBoxLayout(self)
@@ -54,12 +124,12 @@ class TranscribePage(QWidget):
 
         title = QLabel("Расшифровка файлов")
         title.setObjectName("h1")
-        sub = QLabel("Перетащите аудио- или видеофайл. Всё распознаётся локально.")
+        sub = QLabel("Перетащите аудио- или видеофайл. Всё распознаётся локально, без интернета.")
         sub.setObjectName("subtitle")
         col.addWidget(title)
         col.addWidget(sub)
 
-        # выбор файла
+        # --- карточка файла ---
         self.file_card, fc = card()
         self.drop_zone = QLabel()
         self.drop_zone.setObjectName("dropZone")
@@ -77,33 +147,13 @@ class TranscribePage(QWidget):
         row.addStretch()
         row.addWidget(self.clear_btn)
         fc.addLayout(row)
-        # опция разделения по собеседникам
-        diar_row = QHBoxLayout()
-        self.split_check = QCheckBox("Разделять по собеседникам")
-        self.split_check.setEnabled(diarize.is_available())
-        self.split_check.toggled.connect(self._on_split_toggle)
-        self.speakers_box = QComboBox()
-        self.speakers_box.addItem("Определить автоматически", 0)
-        for n in range(2, 9):
-            self.speakers_box.addItem(f"{n} собеседника" if n < 5 else f"{n} собеседников", n)
-        self.speakers_box.setEnabled(False)
-        diar_row.addWidget(self.split_check)
-        diar_row.addWidget(self.speakers_box)
-        diar_row.addStretch()
-        fc.addLayout(diar_row)
-        diar_hint = QLabel("Каждая реплика будет подписана «Собеседник 1/2…». "
-                           "Точность зависит от записи; работает локально, добавляет времени.")
-        diar_hint.setObjectName("hint")
-        diar_hint.setWordWrap(True)
-        fc.addWidget(diar_hint)
-
         self.go_btn = QPushButton("🎙  Расшифровать")
         self.go_btn.setObjectName("primary")
         self.go_btn.clicked.connect(self._start)
         fc.addWidget(self.go_btn)
         col.addWidget(self.file_card)
 
-        # прогресс
+        # --- прогресс ---
         self.progress_card, pc = card()
         self.bar = QProgressBar()
         self.bar.setRange(0, 100)
@@ -118,7 +168,7 @@ class TranscribePage(QWidget):
         pc.addLayout(prow)
         col.addWidget(self.progress_card)
 
-        # ошибка
+        # --- ошибка ---
         self.error_card, ec = card()
         self.error_card.setObjectName("errorCard")
         self.error_label = QLabel()
@@ -132,24 +182,39 @@ class TranscribePage(QWidget):
         ec.addLayout(erow)
         col.addWidget(self.error_card)
 
-        # результат
+        # --- результат ---
         self.result_card, rc = card("Расшифровка готова")
         self.stats = QLabel()
         self.stats.setObjectName("stats")
         rc.addWidget(self.stats)
+
         btns = QHBoxLayout()
-        copy_btn = QPushButton("📋 Копировать")
-        copy_btn.clicked.connect(lambda: self._copy(self.result.text if self.result else ""))
-        export_btn = QPushButton("💾 Экспорт")
-        export_btn.clicked.connect(self._export_result)
-        btns.addWidget(copy_btn)
-        btns.addWidget(export_btn)
+        self.copy_btn = QPushButton("📋 Копировать")
+        self.copy_btn.clicked.connect(self._copy_current)
+        self.export_btn = QPushButton("💾 Экспорт")
+        self.export_btn.clicked.connect(self._export_result)
+        self.split_btn = QPushButton("👥 Разделить по собеседникам")
+        self.split_btn.clicked.connect(self._split_speakers)
+        self.names_btn = QPushButton("✏️ Имена")
+        self.names_btn.clicked.connect(self._rename_speakers)
+        self.toggle_btn = QPushButton("Исходный")
+        self.toggle_btn.clicked.connect(self._toggle_view)
+        self.save_btn = QPushButton("💾 В историю")
+        self.save_btn.clicked.connect(self._save_edits)
+        for b in (self.copy_btn, self.export_btn, self.split_btn,
+                  self.names_btn, self.toggle_btn, self.save_btn):
+            btns.addWidget(b)
         btns.addStretch()
         rc.addLayout(btns)
+
+        edit_hint = QLabel("Текст можно править прямо здесь — затем «Сохранить правки».")
+        edit_hint.setObjectName("hint")
+        rc.addWidget(edit_hint)
+
         self.text = QTextEdit()
-        self.text.setReadOnly(True)
-        self.text.setMinimumHeight(180)
-        self.text.setMaximumHeight(320)
+        self.text.setReadOnly(False)          # правки разрешены
+        self.text.setMinimumHeight(220)
+        self.text.setMaximumHeight(360)
         rc.addWidget(self.text)
         col.addWidget(self.result_card)
         col.addStretch()
@@ -159,7 +224,8 @@ class TranscribePage(QWidget):
         self.toast.hide()
 
     def _refresh(self):
-        busy = self.worker is not None and self.worker.isRunning()
+        busy = ((self.worker and self.worker.isRunning())
+                or (self.diar_worker and self.diar_worker.isRunning()))
         if self.selected_file:
             self.drop_zone.hide()
             self.file_label.setText(
@@ -176,16 +242,25 @@ class TranscribePage(QWidget):
             self.file_label.hide()
             self.clear_btn.hide()
             self.go_btn.hide()
-        self.progress_card.setVisible(busy)
+        self.progress_card.setVisible(bool(busy))
         self.error_card.hide()
-        self.result_card.setVisible(self.result is not None)
-        if self.result:
+        has_result = self.result is not None
+        self.result_card.setVisible(has_result)
+        if has_result:
             speed = self.result.duration / self.result.processing_time if self.result.processing_time else 0
             self.stats.setText(
                 f"🕐 {self.result.duration:.1f} с    ✅ {self.result.confidence * 100:.0f}%    ⚡ {speed:.1f}×")
-            self.text.setPlainText(self.result.text)
+            can_split = diarize.is_available() and self.wav_path and not busy
+            self.split_btn.setVisible(bool(can_split) and self.dialogue_text is None)
+            self.names_btn.setVisible(self.dialogue_text is not None and self.showing_dialogue)
+            self.toggle_btn.setVisible(self.dialogue_text is not None)
+            self.toggle_btn.setText("Исходный" if self.showing_dialogue else "По собеседникам")
 
-    # ---- действия ----
+    def _set_text(self, text: str):
+        self.text.setPlainText(text)
+
+    # ---------- выбор файла ----------
+
     def _pick_file(self):
         exts = " ".join(f"*.{e}" for e in sorted(convert.SUPPORTED_EXTENSIONS))
         path, _ = QFileDialog.getOpenFileName(self, "Выберите аудио- или видеофайл", "",
@@ -197,27 +272,42 @@ class TranscribePage(QWidget):
         if not convert.is_supported(path):
             self._show_error(convert.FORMATS_DESCRIPTION, auto_hide=True)
             return
+        self._cleanup_wav()
         self.selected_file = path
         self.result = None
+        self.plain_text = self.dialogue_text = None
+        self.showing_dialogue = False
+        self.entry_id = None
         self._refresh()
 
     def _reset_file(self):
+        self._cleanup_wav()
         self.selected_file = None
         self.result = None
+        self.plain_text = self.dialogue_text = None
+        self.showing_dialogue = False
+        self.entry_id = None
         self._refresh()
 
-    def _on_split_toggle(self, checked: bool):
-        self.speakers_box.setEnabled(checked)
+    def _cleanup_wav(self):
+        if self.wav_path and os.path.exists(self.wav_path):
+            try:
+                os.remove(self.wav_path)
+            except OSError:
+                pass
+        self.wav_path = None
+
+    # ---------- транскрипция ----------
 
     def _start(self):
         if not self.selected_file or (self.worker and self.worker.isRunning()):
             return
         self.result = None
+        self.dialogue_text = None
+        self.showing_dialogue = False
+        self._cleanup_wav()
         self.settings = settings_store.load()
-        self.worker = TranscriptionWorker(
-            self.transcriber, self.selected_file, self.settings,
-            split_speakers=self.split_check.isChecked(),
-            num_speakers=self.speakers_box.currentData())
+        self.worker = TranscriptionWorker(self.transcriber, self.selected_file, self.settings)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
@@ -226,34 +316,120 @@ class TranscribePage(QWidget):
         self.progress_card.show()
 
     def _cancel(self):
-        if self.worker:
-            self.worker.cancel()
-            self.status.setText("Отмена…")
+        for w in (self.worker, self.diar_worker):
+            if w:
+                w.cancel()
+        self.status.setText("Отмена…")
 
     def _on_progress(self, status: str, value: float):
         self.status.setText(status)
         self.bar.setValue(int(value * 100))
 
-    def _on_done(self, result: TranscriptionResult):
+    def _on_done(self, result: TranscriptionResult, wav_path: str):
+        self.worker = None
+        self.wav_path = wav_path
         self.result = result
         if not result.text.strip():
             self.result = None
-            self.worker = None
+            self._cleanup_wav()
             self._refresh()
             self._show_error("Речь не обнаружена — файл тишины или без голоса.")
             return
-        history.add(os.path.basename(self.selected_file or ""), result.duration,
-                    result.processing_time, result.confidence, result.text,
-                    self.settings["model"], result.language,
-                    limit=int(self.settings.get("history_limit", 50)))
-        self.worker = None
+        self.plain_text = result.text
+        entry = history.add(os.path.basename(self.selected_file or ""), result.duration,
+                            result.processing_time, result.confidence, result.text,
+                            self.settings["model"], result.language,
+                            limit=int(self.settings.get("history_limit", 50)))
+        self.entry_id = entry.id if entry else None
+        self._set_text(result.text)
         self._refresh()
         self.history_changed.emit()
 
     def _on_failed(self, message: str):
         self.worker = None
+        self.diar_worker = None
         self._refresh()
         self._show_error(message)
+
+    # ---------- диаризация по кнопке ----------
+
+    def _split_speakers(self):
+        if not (self.result and self.wav_path and self.result.words):
+            self._show_error("Для разделения нужно заново расшифровать файл.")
+            return
+        dlg = SpeakerCountDialog(self)
+        if not dlg.exec():
+            return
+        self.diar_worker = DiarizationWorker(self.wav_path, self.result.words, dlg.value())
+        self.diar_worker.progress.connect(self._on_progress)
+        self.diar_worker.finished_ok.connect(self._on_diarized)
+        self.diar_worker.failed.connect(self._on_failed)
+        self.diar_worker.start()
+        self._refresh()
+        self.progress_card.show()
+
+    def _on_diarized(self, dialogue: str):
+        self.diar_worker = None
+        self.dialogue_text = dialogue
+        self.showing_dialogue = True
+        self._set_text(dialogue)
+        self._refresh()
+
+    def _toggle_view(self):
+        self._stash_edits()
+        self.showing_dialogue = not self.showing_dialogue
+        self._set_text(self.dialogue_text if self.showing_dialogue else (self.plain_text or ""))
+        self._refresh()
+
+    def _stash_edits(self):
+        """Правки в поле сохраняем в соответствующую версию текста."""
+        current = self.text.toPlainText()
+        if self.showing_dialogue:
+            self.dialogue_text = current
+        else:
+            self.plain_text = current
+
+    def _rename_speakers(self):
+        self._stash_edits()
+        speakers = sorted(set(re.findall(r"Собеседник \d+", self.dialogue_text or "")),
+                          key=lambda s: int(s.split()[-1]))
+        if not speakers:
+            return
+        dlg = SpeakerNamesDialog(speakers, self)
+        if dlg.exec():
+            for sp, name in dlg.mapping().items():
+                self.dialogue_text = self.dialogue_text.replace(f"{sp}:", f"{name}:")
+            self._set_text(self.dialogue_text)
+
+    # ---------- копирование/экспорт/сохранение ----------
+
+    def _current_text(self) -> str:
+        return self.text.toPlainText()
+
+    def _copy_current(self):
+        QGuiApplication.clipboard().setText(self._current_text())
+        self.toast.adjustSize()
+        self.toast.move(self.width() - self.toast.width() - 24, 12)
+        self.toast.show()
+        QTimer.singleShot(2000, self.toast.hide)
+
+    def _save_edits(self):
+        self._stash_edits()
+        if self.entry_id:
+            history.update_text(self.entry_id, self._current_text())
+            self.history_changed.emit()
+            self.toast.setText("Сохранено в историю")
+            self.toast.adjustSize()
+            self.toast.move(self.width() - self.toast.width() - 24, 12)
+            self.toast.show()
+            QTimer.singleShot(2000, lambda: (self.toast.hide(), self.toast.setText("Скопировано!")))
+
+    def _export_result(self):
+        if self.result and self.selected_file:
+            export_transcription(self, os.path.basename(self.selected_file),
+                                 self._current_text(), self.result.duration,
+                                 self.result.processing_time, self.result.confidence,
+                                 datetime.now())
 
     def _show_error(self, message: str, auto_hide: bool = False):
         self.error_label.setText(f"⚠️  {message}")
@@ -261,21 +437,8 @@ class TranscribePage(QWidget):
         if auto_hide:
             QTimer.singleShot(3000, self.error_card.hide)
 
-    def _copy(self, text: str):
-        QGuiApplication.clipboard().setText(text)
-        self.toast.adjustSize()
-        self.toast.move(self.width() - self.toast.width() - 24, 12)
-        self.toast.show()
-        QTimer.singleShot(2000, self.toast.hide)
+    # ---------- drag & drop ----------
 
-    def _export_result(self):
-        if not (self.result and self.selected_file):
-            return
-        export_transcription(self, os.path.basename(self.selected_file), self.result.text,
-                             self.result.duration, self.result.processing_time,
-                             self.result.confidence, datetime.now())
-
-    # ---- drag & drop ----
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
             self.drop_zone.setProperty("hover", True)
