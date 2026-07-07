@@ -106,7 +106,7 @@ class SettingsPage(QWidget):
         report_btn = QPushButton("🐞 Сообщить о проблеме")
         report_btn.clicked.connect(self._report)
         lay5.addWidget(report_btn)
-        hint5 = QLabel("Отчёт (версия, система, лог) сохранится в файл на Рабочем столе и скопируется в буфер — пришлите его разработчику любым способом.")
+        hint5 = QLabel("Одна кнопка — лог (версия, система, ошибки) уходит разработчику автоматически. Текст диктовок и аудио НЕ отправляются.")
         hint5.setObjectName("hint")
         hint5.setWordWrap(True)
         lay5.addWidget(hint5)

@@ -111,11 +111,12 @@ def main():
         from .ui import feedback
         box = QMessageBox(QMessageBox.Critical, "Ошибка SteadyTranscribe",
                           f"Произошла ошибка. Приложение продолжит работу.\n\n{exc_value}")
-        send = box.addButton("Сохранить отчёт", QMessageBox.AcceptRole)
+        send = box.addButton("Отправить разработчику", QMessageBox.AcceptRole)
         box.addButton("Закрыть", QMessageBox.RejectRole)
         box.exec()
+        feedback.send_auto(extra=f"Ошибка: {exc_value}")  # тихо отправляем сразу
         if box.clickedButton() is send:
-            feedback.send_report(extra=f"Автоматический отчёт об ошибке:\n{exc_value}")
+            feedback.send_report(extra=f"Ручная отправка: {exc_value}")
     sys.excepthook = excepthook
 
     from .ui.main_window import MainWindow
