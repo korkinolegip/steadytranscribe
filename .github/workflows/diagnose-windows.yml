@@ -13,50 +13,43 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pyinstaller
 
-      - name: Install ffmpeg
+      - name: Install ffmpeg (bundle)
         shell: pwsh
-        run: choco install ffmpeg -y
+        run: |
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-tmp
+          New-Item -ItemType Directory -Force -Path dist-ffmpeg | Out-Null
+          Copy-Item (Get-ChildItem ffmpeg-tmp -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName dist-ffmpeg/
+          Copy-Item (Get-ChildItem ffmpeg-tmp -Recurse -Filter ffprobe.exe | Select-Object -First 1).FullName dist-ffmpeg/
+
+      - name: Build EXE (как в релизе)
+        run: pyinstaller packaging/steadytranscribe.spec --distpath dist
+
+      - name: Bundle ffmpeg + diarization into app
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/SteadyTranscribe/ffmpeg | Out-Null
+          Copy-Item dist-ffmpeg/* dist/SteadyTranscribe/ffmpeg/
+          New-Item -ItemType Directory -Force -Path dist/SteadyTranscribe/diarization | Out-Null
+          Copy-Item assets/diarization/* dist/SteadyTranscribe/diarization/
 
       - name: Generate test audio
         shell: pwsh
-        run: ffmpeg -f lavfi -i "sine=frequency=200:duration=6" -ar 16000 -ac 1 test.wav
+        run: dist/SteadyTranscribe/ffmpeg/ffmpeg.exe -f lavfi -i "sine=frequency=200:duration=6" -ar 16000 -ac 1 test.wav
 
-      - name: TEST 1 — import both native libs together
+      - name: RUN EXE --selftest (реальная сборка, как у пользователя)
         shell: pwsh
         run: |
-          python -c "import faster_whisper; print('faster_whisper OK')"
-          python -c "import sherpa_onnx; print('sherpa_onnx OK')"
-          python -c "import faster_whisper, sherpa_onnx; print('both together OK')"
-
-      - name: TEST 2 — download tiny model
-        shell: pwsh
-        env:
-          PYTHONPATH: src
-        run: |
-          python -c "import threading; from steadytranscribe.core import models; models.download('tiny', lambda d,t: None, threading.Event()); print('tiny downloaded:', models.is_intact('tiny'))"
-
-      - name: TEST 3 — transcribe (the suspected crash point)
-        shell: pwsh
-        env:
-          PYTHONPATH: src
-          KMP_DUPLICATE_LIB_OK: "TRUE"
-        run: |
-          python -c "from steadytranscribe.core.transcriber import Transcriber; t=Transcriber(); r=t.transcribe('test.wav', model='tiny', language='ru', device='auto', initial_prompt='', status_cb=lambda s,p: print('  ',s,int(p*100),'%'), cancel_check=lambda: False); print('TRANSCRIBE OK, chars:', len(r.text))"
-
-      - name: TEST 4 — transcribe with word timestamps (real app path)
-        shell: pwsh
-        env:
-          PYTHONPATH: src
-          KMP_DUPLICATE_LIB_OK: "TRUE"
-        run: |
-          python -c "from steadytranscribe.core.transcriber import Transcriber; t=Transcriber(); r=t.transcribe('test.wav', model='tiny', language='ru', device='auto', initial_prompt='', status_cb=lambda s,p: None, cancel_check=lambda: False, word_timestamps=True); print('WORD TIMESTAMPS OK, words:', len(r.words or []))"
-
-      - name: TEST 5 — WITHOUT KMP fix (does it crash?)
-        if: always()
-        shell: pwsh
-        env:
-          PYTHONPATH: src
-        run: |
-          python -c "from steadytranscribe.core.transcriber import Transcriber; t=Transcriber(); r=t.transcribe('test.wav', model='tiny', language='ru', device='auto', initial_prompt='', status_cb=lambda s,p: None, cancel_check=lambda: False); print('NO-KMP TRANSCRIBE OK')"
+          Write-Host "=== Запуск собранного exe в режиме самотеста ==="
+          & dist/SteadyTranscribe/SteadyTranscribe.exe --selftest (Resolve-Path test.wav)
+          $code = $LASTEXITCODE
+          Write-Host "=== EXIT CODE: $code ==="
+          if ($code -ne 0) {
+            Write-Host "=== crash.txt ==="
+            Get-Content "$env:APPDATA\SteadyTranscribe\crash.txt" -ErrorAction SilentlyContinue
+            Write-Host "=== log.txt ==="
+            Get-Content "$env:APPDATA\SteadyTranscribe\log.txt" -ErrorAction SilentlyContinue
+            exit $code
+          }

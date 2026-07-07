@@ -1,18 +1,11 @@
 """Точка входа SteadyTranscribe."""
-# ВАЖНО: до любых тяжёлых импортов (ctranslate2/onnxruntime) — обход конфликта
-# OpenMP-библиотек, из-за которого приложение падало при загрузке модели на Windows.
+import faulthandler
+import logging
 import os
-os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-os.environ.setdefault("OMP_NUM_THREADS", str(max(os.cpu_count() or 4, 1)))
+import sys
+import traceback
 
-import faulthandler  # noqa: E402
-import logging  # noqa: E402
-import sys  # noqa: E402
-import traceback  # noqa: E402
-
-from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
-
-from .storage.settings import app_data_dir  # noqa: E402
+from .storage.settings import app_data_dir
 
 
 def _setup_logging() -> str:
@@ -27,7 +20,31 @@ def _setup_logging() -> str:
     return log_path
 
 
+def _selftest(audio_path: str) -> int:
+    """Прогон транскрипции без GUI — для проверки собранного exe в CI.
+    Печатает шаги и OK/ошибку; нативный краш попадёт в stderr/crash.txt."""
+    faulthandler.enable()
+    print("SELFTEST: старт", flush=True)
+    from .core import convert
+    from .core.transcriber import Transcriber
+    print("SELFTEST: импорт ок", flush=True)
+    wav = convert.to_wav16k(audio_path)
+    print("SELFTEST: конвертация ок", flush=True)
+    t = Transcriber()
+    r = t.transcribe(wav, model="tiny", language="ru", device="auto",
+                     initial_prompt="",
+                     status_cb=lambda s, p: print(f"SELFTEST: {p*100:.0f}%", flush=True),
+                     cancel_check=lambda: False, word_timestamps=True)
+    print(f"SELFTEST: ГОТОВО, символов={len(r.text)}, слов={len(r.words or [])}", flush=True)
+    return 0
+
+
 def main():
+    if "--selftest" in sys.argv:
+        idx = sys.argv.index("--selftest")
+        sys.exit(_selftest(sys.argv[idx + 1]))
+
+    from PySide6.QtWidgets import QApplication, QMessageBox
     log_path = _setup_logging()
     logging.info("=== SteadyTranscribe запуск ===")
 
