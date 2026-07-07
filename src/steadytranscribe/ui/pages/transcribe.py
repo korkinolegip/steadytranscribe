@@ -415,6 +415,12 @@ class TranscribePage(QWidget):
         win = self.window()
         active = bool(win and win.isActiveWindow())
         priority.set_background(not active)
+        # то же — для подпроцесса разделения по собеседникам: пока пользователь
+        # ждёт у окна, он работает на полной скорости (иначе казался очень долгим)
+        if self.diar_worker is not None:
+            pid = self.diar_worker.proc_pid()
+            if pid:
+                priority.set_pid_background(pid, not active)
 
         elapsed = time.monotonic() - self._start_time
         p = self._last_progress

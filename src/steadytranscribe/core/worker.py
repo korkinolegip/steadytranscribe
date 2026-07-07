@@ -73,6 +73,11 @@ class DiarizationWorker(QThread):
         self._cancelled = True
         self._kill_proc()
 
+    def proc_pid(self) -> int:
+        """PID подпроцесса разделения (0, если ещё не запущен) — для авто-приоритета."""
+        p = self._proc
+        return p.pid if p is not None and p.poll() is None else 0
+
     def _kill_proc(self):
         """Жёстко завершить дочерний процесс — чтобы не оставался сиротой."""
         p = self._proc
