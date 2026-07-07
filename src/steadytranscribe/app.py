@@ -78,15 +78,25 @@ def _selftest(audio_path: str) -> int:
 
 def _run_diarize(wav_path: str, num_speakers: int) -> int:
     """Диаризация в ОТДЕЛЬНОМ процессе — интерфейс не зависает.
-    Печатает прогресс (PROGRESS доля) и результат (RESULT json)."""
-    import json
-    from .core import diarize
-    turns = diarize.diarize(
-        wav_path, num_speakers,
-        status_cb=lambda s, p: print(f"PROGRESS {p:.3f}", flush=True),
-        cancel_check=lambda: False)
-    print("RESULT " + json.dumps([[t.speaker, t.start, t.end] for t in turns]), flush=True)
-    return 0
+    Печатает прогресс (PROGRESS доля) и результат (RESULT json).
+    Пишет отдельный лог, чтобы диагностировать сбои."""
+    _setup_logging()
+    diag_log = logging.getLogger("diarize")
+    try:
+        diag_log.info("diarize start: %s speakers=%s", wav_path, num_speakers)
+        import json
+        from .core import diarize
+        turns = diarize.diarize(
+            wav_path, num_speakers,
+            status_cb=lambda s, p: print(f"PROGRESS {p:.3f}", flush=True),
+            cancel_check=lambda: False)
+        diag_log.info("diarize done: turns=%s", len(turns))
+        print("RESULT " + json.dumps([[t.speaker, t.start, t.end] for t in turns]), flush=True)
+        return 0
+    except Exception as e:  # noqa: BLE001
+        diag_log.exception("diarize FAILED: %s", e)
+        print(f"ERROR {e}", flush=True)
+        return 1
 
 
 def main():

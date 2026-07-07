@@ -16,7 +16,11 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from ..storage.settings import app_data_dir
 
 # Секретный канал (как пароль) — логи видит только разработчик, кто знает имя канала.
-_NTFY_URL = "https://ntfy.sh/stc-logs-2bfe9693f4dbd247"
+# Несколько зеркал: некоторые VPN блокируют ntfy.sh — пробуем по очереди.
+_NTFY_URLS = [
+    "https://ntfy.sh/stc-logs-2bfe9693f4dbd247",
+    "https://ntfy.envs.net/stc-logs-2bfe9693f4dbd247",
+]
 
 
 def _tail(path: str, limit: int = 6000) -> str:
@@ -50,16 +54,18 @@ class _Sender(QThread):
         self.ok = False
 
     def run(self):
-        try:
-            data = self.body.encode("utf-8")[:60000]
-            req = urllib.request.Request(
-                _NTFY_URL, data=data, method="POST",
-                headers={"Title": self.title.encode("ascii", "replace").decode(),
-                         "Tags": "sos", "User-Agent": "SteadyTranscribe"})
-            urllib.request.urlopen(req, timeout=15)
-            self.ok = True
-        except Exception as e:  # noqa: BLE001
-            logging.error("Не удалось отправить отчёт: %s", e)
+        data = self.body.encode("utf-8")[:60000]
+        for url in _NTFY_URLS:  # пробуем зеркала по очереди (VPN может блокировать одно)
+            try:
+                req = urllib.request.Request(
+                    url, data=data, method="POST",
+                    headers={"Title": self.title.encode("ascii", "replace").decode(),
+                             "Tags": "sos", "User-Agent": "SteadyTranscribe"})
+                urllib.request.urlopen(req, timeout=15)
+                self.ok = True
+                return
+            except Exception as e:  # noqa: BLE001
+                logging.error("Отчёт на %s не ушёл: %s", url, e)
 
 
 def send_auto(extra: str = "") -> None:

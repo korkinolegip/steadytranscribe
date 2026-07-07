@@ -64,6 +64,13 @@ class Transcriber:
         self._model = None
         self._model_key = None
 
+    def unload(self):
+        """Освободить модель из памяти (перед диаризацией — чтобы хватило RAM)."""
+        self._model = None
+        self._model_key = None
+        import gc
+        gc.collect()
+
     def _load_model(self, model_name: str, device: str, status_cb):
         key = (model_name, device)
         if self._model is not None and self._model_key == key:

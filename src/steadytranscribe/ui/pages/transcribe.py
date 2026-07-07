@@ -362,6 +362,9 @@ class TranscribePage(QWidget):
         dlg = SpeakerCountDialog(self)
         if not dlg.exec():
             return
+        # освобождаем модель распознавания из памяти — чтобы разделению хватило RAM
+        # (иначе на длинных файлах Windows может «убить» приложение из-за нехватки памяти)
+        self.transcriber.unload()
         self.diar_worker = DiarizationWorker(self.wav_path, self.result.words, dlg.value())
         self.diar_worker.progress.connect(self._on_progress)
         self.diar_worker.finished_ok.connect(self._on_diarized)

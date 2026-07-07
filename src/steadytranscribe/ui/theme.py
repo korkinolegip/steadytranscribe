@@ -98,10 +98,11 @@ QLineEdit:focus {{ border-color: {ACCENT}; }}
 #accLabel {{ color: {ACCENT}; font-size: 11px; }}
 
 /* ---------- Прочее ---------- */
-QTextEdit {{
+QTextEdit, QPlainTextEdit {{
     background: {CONTENT_BG}; border: 1px solid {BORDER};
-    border-radius: 10px; padding: 8px;
+    border-radius: 10px; padding: 8px; color: {TEXT};
 }}
+QPlainTextEdit:focus, QTextEdit:focus {{ border-color: {ACCENT}; }}
 QProgressBar {{
     background: {CARD_BG_ELEVATED}; border: none; border-radius: 5px;
     height: 14px; text-align: center; color: white; font-size: 10px;

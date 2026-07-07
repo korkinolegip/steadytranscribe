@@ -3,8 +3,8 @@ import webbrowser
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QSpinBox,
-    QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton,
+    QScrollArea, QSpinBox, QVBoxLayout, QWidget,
 )
 
 from ...storage import settings as store
@@ -30,9 +30,18 @@ class SettingsPage(QWidget):
     def __init__(self):
         super().__init__()
         s = store.load()
-        outer = QVBoxLayout(self)
+        # прокрутка — чтобы кнопки внизу не обрезались на невысоком окне
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        content = QWidget()
+        outer = QVBoxLayout(content)
         outer.setContentsMargins(24, 20, 24, 24)
         outer.setSpacing(14)
+        scroll.setWidget(content)
+        root.addWidget(scroll)
 
         title = QLabel("Настройки")
         title.setObjectName("h1")
@@ -59,11 +68,18 @@ class SettingsPage(QWidget):
         desc.setWordWrap(True)
         lay2.addWidget(desc)
         self.prompt_edit = QPlainTextEdit(s["initial_prompt"])
-        self.prompt_edit.setPlaceholderText("SteadyControl\nаудиобейдж\nХоРеКа\nимена коллег…")
-        self.prompt_edit.setFixedHeight(96)
+        self.prompt_edit.setPlaceholderText(
+            "Например:\nSteadyControl\nаудиобейдж\nИван Петров\nконверсия")
+        self.prompt_edit.setFixedHeight(110)
         lay2.addWidget(self.prompt_edit)
-        save_dict = QPushButton("Сохранить словарь")
-        save_dict.clicked.connect(self._save)
+        example = QLabel("Программа запомнит эти слова и будет писать их правильно, "
+                         "а не «на слух». Помогает с именами, названиями компаний и терминами.")
+        example.setObjectName("hint")
+        example.setWordWrap(True)
+        lay2.addWidget(example)
+        save_dict = QPushButton("💾 Сохранить словарь")
+        save_dict.setObjectName("primary")
+        save_dict.clicked.connect(self._save_dict)
         drow = QHBoxLayout()
         drow.addStretch()
         drow.addWidget(save_dict)
@@ -138,6 +154,12 @@ class SettingsPage(QWidget):
             "history_limit": self.history_spin.value(),
         })
         store.save(s)
+
+    def _save_dict(self):
+        from PySide6.QtWidgets import QMessageBox
+        self._save()
+        QMessageBox.information(self, "Словарь сохранён",
+                               "Слова сохранены. Они применятся к следующим расшифровкам.")
 
     def _reset_settings(self):
         from PySide6.QtWidgets import QMessageBox
