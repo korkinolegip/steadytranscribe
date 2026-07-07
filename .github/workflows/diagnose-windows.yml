@@ -39,6 +39,12 @@ jobs:
         shell: pwsh
         run: dist/SteadyTranscribe/ffmpeg/ffmpeg.exe -f lavfi -i "sine=frequency=200:duration=6" -ar 16000 -ac 1 test.wav
 
+      - name: Download tiny model (в %APPDATA%, откуда читает exe)
+        shell: pwsh
+        env:
+          PYTHONPATH: src
+        run: python -c "import threading; from steadytranscribe.core import models; models.download('tiny', lambda d,t: None, threading.Event()); print('tiny intact:', models.is_intact('tiny'))"
+
       - name: RUN EXE --selftest (реальная сборка, как у пользователя)
         shell: pwsh
         run: |
