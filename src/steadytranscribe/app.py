@@ -22,20 +22,20 @@ def _setup_logging() -> str:
 
 def _selftest(audio_path: str) -> int:
     """Прогон транскрипции без GUI — для проверки собранного exe в CI.
-    Печатает шаги и OK/ошибку; нативный краш попадёт в stderr/crash.txt."""
+    Только ASCII в выводе (консоль Windows = cp1252)."""
     faulthandler.enable()
-    print("SELFTEST: старт", flush=True)
+    print("SELFTEST: start", flush=True)
     from .core import convert
     from .core.transcriber import Transcriber
-    print("SELFTEST: импорт ок", flush=True)
+    print("SELFTEST: imports ok", flush=True)
     wav = convert.to_wav16k(audio_path)
-    print("SELFTEST: конвертация ок", flush=True)
+    print("SELFTEST: ffmpeg convert ok", flush=True)
     t = Transcriber()
     r = t.transcribe(wav, model="tiny", language="ru", device="auto",
                      initial_prompt="",
-                     status_cb=lambda s, p: print(f"SELFTEST: {p*100:.0f}%", flush=True),
+                     status_cb=lambda s, p: print(f"SELFTEST: progress {p*100:.0f}%", flush=True),
                      cancel_check=lambda: False, word_timestamps=True)
-    print(f"SELFTEST: ГОТОВО, символов={len(r.text)}, слов={len(r.words or [])}", flush=True)
+    print(f"SELFTEST: DONE chars={len(r.text)} words={len(r.words or [])}", flush=True)
     return 0
 
 
