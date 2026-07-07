@@ -92,9 +92,15 @@ class Transcriber:
         # а попытка использовать видеокарту вызывает мгновенный крах.
         # Ускорение обеспечивает AVX2 на процессоре.
         import logging
-        # Оптимум потоков: примерно половина логических ядер (обычно = физические),
-        # с потолком 8. Больше ядер не всегда быстрее (перегрузка планировщика).
-        threads = min(max((os.cpu_count() or 4) // 2, 4), 8)
+        from ..storage import settings as _s
+        background = _s.load().get("load_mode", "background") == "background"
+        cores = os.cpu_count() or 4
+        if background:
+            # фоновый режим: меньше ядер + низкий приоритет — не мешаем работе пользователя
+            threads = max(cores // 3, 2)
+        else:
+            # быстрый режим: больше ядер (потолок 8), обычный приоритет
+            threads = min(max(cores // 2, 4), 8)
         logging.info("transcribe: движок на CPU, потоков=%s (device игнорируется: %s)",
                      threads, device)
         try:
@@ -118,7 +124,12 @@ class Transcriber:
         progress_range — куда мапить прогресс распознавания на общей шкале.
         """
         import logging
-        logging.info("transcribe: загрузка модели %s (%s)", model, device)
+        from ..storage import settings as _s
+        from . import priority
+        # фоновый режим: понижаем приоритет — расшифровка не мешает работе пользователя
+        background = _s.load().get("load_mode", "background") == "background"
+        priority.set_background(background)
+        logging.info("transcribe: загрузка модели %s (%s), фоновый=%s", model, device, background)
         whisper = self._load_model(model, device, status_cb)
         logging.info("transcribe: модель загружена, старт распознавания")
         status_cb("Анализ файла…", 0.2)
@@ -166,6 +177,7 @@ class Transcriber:
                 status_cb(f"Распознавание… {int(frac * 100)}%", p_lo + frac * (p_hi - p_lo))
 
         processing = time.monotonic() - start
+        priority.set_background(False)  # вернуть обычный приоритет
         text = " ".join(p for p in parts if p)
         confidence = sum(confidences) / len(confidences) if confidences else 0.0
         status_cb("Готово!", 1.0)

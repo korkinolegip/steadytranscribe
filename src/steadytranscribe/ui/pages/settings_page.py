@@ -57,6 +57,16 @@ class SettingsPage(QWidget):
         self.lang_box.currentIndexChanged.connect(self._save)
         _row(lay, "Язык речи", "Автоопределение работает хорошо; явный выбор чуть точнее.", self.lang_box)
 
+        self.mode_box = QComboBox()
+        self.mode_box.addItem("Фоновый — не мешать другим программам", "background")
+        self.mode_box.addItem("Быстрый — максимальная скорость", "fast")
+        self.mode_box.setCurrentIndex(0 if s.get("load_mode", "background") == "background" else 1)
+        self.mode_box.currentIndexChanged.connect(self._save)
+        _row(lay, "Режим нагрузки",
+             "В фоновом режиме расшифровка использует свободные ресурсы — можно спокойно "
+             "работать в других программах. Быстрый режим — когда нужно закончить скорее.",
+             self.mode_box)
+
         outer.addWidget(box)
 
         # --- Словарь (многострочный) ---
@@ -158,6 +168,7 @@ class SettingsPage(QWidget):
         s = store.load()
         s.update({
             "language": self.lang_box.currentData(),
+            "load_mode": self.mode_box.currentData(),
             "initial_prompt": self.prompt_edit.toPlainText().strip(),
             "history_limit": self.history_spin.value(),
         })
