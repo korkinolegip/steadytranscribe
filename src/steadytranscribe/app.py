@@ -10,20 +10,22 @@ os.environ.setdefault("CT2_USE_MKL", "0")
 
 
 def _detect_cpu() -> str:
-    """Определяет ускорение процессора и настраивает движок распознавания:
-    мощный CPU (AVX2) → быстрый режим; слабый → совместимый (работает везде).
-    Возвращает выбранный режим для лога/настроек."""
+    """Определяет ускорение процессора через системный вызов Windows
+    (без подпроцессов!). Мощный CPU (AVX2) → быстрый режим; иначе → совместимый.
+    ВАЖНО: не использовать py-cpuinfo — в собранном exe он рекурсивно
+    запускает копии приложения (плодятся окна)."""
     try:
-        from cpuinfo import get_cpu_info
-        flags = set(get_cpu_info().get("flags", []))
-    except Exception:  # noqa: BLE001 — не смогли определить → безопасный режим
-        os.environ["CT2_FORCE_CPU_ISA"] = "GENERIC"
-        return "generic"
-    if "avx2" in flags:
-        return "avx2"                        # быстрый режим — ISA не форсируем
-    if "avx" in flags:
-        os.environ["CT2_FORCE_CPU_ISA"] = "AVX"
-        return "avx"
+        import ctypes
+        if sys.platform == "win32":
+            # PF_AVX2_INSTRUCTIONS_AVAILABLE = 40 (Windows API IsProcessorFeaturePresent)
+            if ctypes.windll.kernel32.IsProcessorFeaturePresent(40):
+                return "avx2"          # быстрый режим — ISA не форсируем
+            # PF_AVX_INSTRUCTIONS_AVAILABLE = 39
+            if ctypes.windll.kernel32.IsProcessorFeaturePresent(39):
+                os.environ["CT2_FORCE_CPU_ISA"] = "AVX"
+                return "avx"
+    except Exception:  # noqa: BLE001
+        pass
     os.environ["CT2_FORCE_CPU_ISA"] = "GENERIC"
     return "generic"
 
@@ -82,9 +84,8 @@ def main():
     log_path = _setup_logging()
     logging.info("=== SteadyTranscribe запуск ===")
     try:
-        import multiprocessing
         logging.info("CPU=%s cores=%s режим=%s ISA=%s OS=%s",
-                     platform.processor(), multiprocessing.cpu_count(), CPU_MODE,
+                     platform.processor(), os.cpu_count(), CPU_MODE,
                      os.environ.get("CT2_FORCE_CPU_ISA", "быстрый"), platform.platform())
         # на слабом CPU (без AVX2) по умолчанию — лёгкая модель, если пользователь ещё не выбирал
         from .storage import settings as _s
