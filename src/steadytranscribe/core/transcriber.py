@@ -92,6 +92,8 @@ class Transcriber:
             language=lang,
             initial_prompt=initial_prompt or None,
             vad_filter=True,
+            # защита от зацикливания на повторах (известная особенность Whisper)
+            condition_on_previous_text=False,
         )
         duration = float(info.duration or 0.0)
 
