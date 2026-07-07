@@ -43,7 +43,8 @@ jobs:
         shell: pwsh
         env:
           PYTHONPATH: src
-        run: python -c "import threading; from steadytranscribe.core import models; models.download('tiny', lambda d,t: None, threading.Event()); print('tiny intact:', models.is_intact('tiny'))"
+        run: |
+          python -c "import threading; from steadytranscribe.core import models; models.download('tiny', lambda d,t: None, threading.Event()); print('tiny intact', models.is_intact('tiny'))"
 
       - name: RUN EXE --selftest (реальная сборка, как у пользователя)
         shell: pwsh
