@@ -1,0 +1,62 @@
+name: Diagnose Windows Crash
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install ffmpeg
+        shell: pwsh
+        run: choco install ffmpeg -y
+
+      - name: Generate test audio
+        shell: pwsh
+        run: ffmpeg -f lavfi -i "sine=frequency=200:duration=6" -ar 16000 -ac 1 test.wav
+
+      - name: TEST 1 — import both native libs together
+        shell: pwsh
+        run: |
+          python -c "import faster_whisper; print('faster_whisper OK')"
+          python -c "import sherpa_onnx; print('sherpa_onnx OK')"
+          python -c "import faster_whisper, sherpa_onnx; print('both together OK')"
+
+      - name: TEST 2 — download tiny model
+        shell: pwsh
+        env:
+          PYTHONPATH: src
+        run: |
+          python -c "import threading; from steadytranscribe.core import models; models.download('tiny', lambda d,t: None, threading.Event()); print('tiny downloaded:', models.is_intact('tiny'))"
+
+      - name: TEST 3 — transcribe (the suspected crash point)
+        shell: pwsh
+        env:
+          PYTHONPATH: src
+          KMP_DUPLICATE_LIB_OK: "TRUE"
+        run: |
+          python -c "from steadytranscribe.core.transcriber import Transcriber; t=Transcriber(); r=t.transcribe('test.wav', model='tiny', language='ru', device='auto', initial_prompt='', status_cb=lambda s,p: print('  ',s,int(p*100),'%'), cancel_check=lambda: False); print('TRANSCRIBE OK, chars:', len(r.text))"
+
+      - name: TEST 4 — transcribe with word timestamps (real app path)
+        shell: pwsh
+        env:
+          PYTHONPATH: src
+          KMP_DUPLICATE_LIB_OK: "TRUE"
+        run: |
+          python -c "from steadytranscribe.core.transcriber import Transcriber; t=Transcriber(); r=t.transcribe('test.wav', model='tiny', language='ru', device='auto', initial_prompt='', status_cb=lambda s,p: None, cancel_check=lambda: False, word_timestamps=True); print('WORD TIMESTAMPS OK, words:', len(r.words or []))"
+
+      - name: TEST 5 — WITHOUT KMP fix (does it crash?)
+        if: always()
+        shell: pwsh
+        env:
+          PYTHONPATH: src
+        run: |
+          python -c "from steadytranscribe.core.transcriber import Transcriber; t=Transcriber(); r=t.transcribe('test.wav', model='tiny', language='ru', device='auto', initial_prompt='', status_cb=lambda s,p: None, cancel_check=lambda: False); print('NO-KMP TRANSCRIBE OK')"
