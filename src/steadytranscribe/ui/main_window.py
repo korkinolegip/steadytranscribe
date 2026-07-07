@@ -96,7 +96,7 @@ class MainWindow(QMainWindow):
                 self.nav.addItem(item)
         self.nav.currentItemChanged.connect(self._on_nav)
         slay.addWidget(self.nav, stretch=1)
-        version = QLabel("v1.3.7 · всё локально")
+        version = QLabel("v1.3.8 · всё локально")
         version.setObjectName("tertiary")
         version.setContentsMargins(14, 8, 8, 12)
         slay.addWidget(version)

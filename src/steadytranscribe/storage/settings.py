@@ -57,3 +57,11 @@ def save(settings: dict) -> None:
     with open(_settings_path(), "w", encoding="utf-8") as f:
         json.dump({k: settings[k] for k in DEFAULTS if k in settings}, f,
                   ensure_ascii=False, indent=2)
+
+
+def reset() -> None:
+    """Сброс настроек к значениям по умолчанию (устраняет битые старые настройки)."""
+    try:
+        os.remove(_settings_path())
+    except OSError:
+        pass

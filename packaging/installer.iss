@@ -1,6 +1,6 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.3.7"
+#define AppVersion "1.3.8"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -44,3 +44,10 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 
 [Run]
 Filename: "{app}\SteadyTranscribe.exe"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
+
+; При удалении чистим настройки и логи (модели НЕ трогаем — чтобы не качать заново).
+; Это устраняет проблему: битые старые настройки переживали переустановку.
+[UninstallDelete]
+Type: files; Name: "{userappdata}\SteadyTranscribe\settings.json"
+Type: files; Name: "{userappdata}\SteadyTranscribe\log.txt"
+Type: files; Name: "{userappdata}\SteadyTranscribe\crash.txt"

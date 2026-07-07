@@ -110,6 +110,15 @@ class SettingsPage(QWidget):
         hint5.setObjectName("hint")
         hint5.setWordWrap(True)
         lay5.addWidget(hint5)
+        reset_btn = QPushButton("↺ Сбросить настройки")
+        reset_btn.setObjectName("danger")
+        reset_btn.clicked.connect(self._reset_settings)
+        lay5.addWidget(reset_btn)
+        hint6 = QLabel("Вернуть настройки к исходным (если программа ведёт себя странно). "
+                       "Модели и история сохранятся.")
+        hint6.setObjectName("hint")
+        hint6.setWordWrap(True)
+        lay5.addWidget(hint6)
         outer.addWidget(box5)
 
         note = QLabel("Модель распознавания выбирается на странице «Модели». "
@@ -129,6 +138,14 @@ class SettingsPage(QWidget):
             "history_limit": self.history_spin.value(),
         })
         store.save(s)
+
+    def _reset_settings(self):
+        from PySide6.QtWidgets import QMessageBox
+        if QMessageBox.question(self, "Сброс настроек",
+                                "Вернуть все настройки к исходным? Модели и история сохранятся.") == QMessageBox.Yes:
+            store.reset()
+            QMessageBox.information(self, "Готово",
+                                    "Настройки сброшены. Перезапустите программу.")
 
     def _report(self):
         from .. import feedback

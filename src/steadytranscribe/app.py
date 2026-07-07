@@ -38,7 +38,7 @@ from .storage.settings import app_data_dir
 def _setup_logging() -> str:
     log_path = os.path.join(app_data_dir(), "log.txt")
     logging.basicConfig(
-        filename=log_path, level=logging.INFO,
+        filename=log_path, level=logging.INFO, encoding="utf-8",
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     try:
         faulthandler.enable(open(os.path.join(app_data_dir(), "crash.txt"), "w"))
