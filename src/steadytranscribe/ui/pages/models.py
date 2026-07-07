@@ -1,11 +1,13 @@
-"""Страница «Модели» — аналог «Голосового движка» FluidVoice:
-строки моделей со Speed/Accuracy, скачивание с прогрессом, активация."""
+"""Страница «Модели» — выбор/скачивание/активация с явными статусами.
+
+Статусы строки: не скачана · скачивается · повреждена · скачана · активна.
+"""
 import threading
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QScrollArea, QVBoxLayout, QWidget,
 )
 
 from ...core import models
@@ -58,74 +60,99 @@ class ModelRow(QFrame):
         metrics.addWidget(sp)
         metrics.addWidget(ac)
         metrics.addStretch()
+        self.status_label = QLabel()
+        self.status_label.setObjectName("hint")
         left.addWidget(name)
         left.addWidget(note)
         left.addLayout(metrics)
+        left.addWidget(self.status_label)
         lay.addLayout(left, stretch=1)
 
-        # правая зона действий
-        self.right = QVBoxLayout()
-        self.right.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self.progress = QProgressBar()
-        self.progress.setFixedWidth(150)
-        self.progress.hide()
+        self.progress.setFixedWidth(160)
         self.cancel_btn = QPushButton("Отмена")
-        self.cancel_btn.hide()
         self.cancel_btn.clicked.connect(self._cancel)
-        self.action_btn = QPushButton()
-        self.action_btn.clicked.connect(self._action)
-        self.badge = QLabel("Активна")
+        self.download_btn = QPushButton("Скачать")
+        self.download_btn.setObjectName("download")
+        self.download_btn.clicked.connect(self._download)
+        self.activate_btn = QPushButton("Активировать")
+        self.activate_btn.setObjectName("activate")
+        self.activate_btn.clicked.connect(self._activate)
+        self.redownload_btn = QPushButton("Скачать заново")
+        self.redownload_btn.setObjectName("download")
+        self.redownload_btn.clicked.connect(self._redownload)
+        self.badge = QLabel("✓ Активна")
         self.badge.setObjectName("activeBadge")
-        self.delete_btn = QPushButton("🗑")
-        self.delete_btn.setFixedWidth(34)
+        self.delete_btn = QPushButton("🗑 Удалить")
+        self.delete_btn.setObjectName("danger")
         self.delete_btn.clicked.connect(self._delete)
+
         row = QHBoxLayout()
-        for w in (self.progress, self.cancel_btn, self.delete_btn, self.action_btn):
+        for w in (self.progress, self.cancel_btn, self.redownload_btn,
+                  self.badge, self.delete_btn, self.activate_btn, self.download_btn):
             row.addWidget(w)
-        row.addWidget(self.badge)
-        self.right.addLayout(row)
-        lay.addLayout(self.right)
+        wrap = QVBoxLayout()
+        wrap.setAlignment(Qt.AlignVCenter)
+        wrap.addLayout(row)
+        lay.addLayout(wrap)
         self.refresh()
 
-    def refresh(self):
+    def _state(self) -> str:
+        if self.worker and self.worker.isRunning():
+            return "downloading"
+        if not models.is_downloaded(self.info.key):
+            return "absent"
+        if not models.is_intact(self.info.key):
+            return "corrupt"
         s = settings_store.load()
-        downloading = self.worker is not None and self.worker.isRunning()
-        downloaded = models.is_downloaded(self.info.key)
-        active = downloaded and s["model"] == self.info.key
-        self.progress.setVisible(downloading)
-        self.cancel_btn.setVisible(downloading)
-        self.badge.setVisible(active and not downloading)
-        self.delete_btn.setVisible(downloaded and not active and not downloading)
-        self.action_btn.setVisible(not downloading and not active)
-        if not downloaded:
-            self.action_btn.setText("Скачать")
-            self.action_btn.setObjectName("download")
-        else:
-            self.action_btn.setText("Активировать")
-            self.action_btn.setObjectName("activate")
-        self.action_btn.style().unpolish(self.action_btn)
-        self.action_btn.style().polish(self.action_btn)
-        self.setProperty("active", bool(active))
+        return "active" if s["model"] == self.info.key else "ready"
+
+    def refresh(self):
+        st = self._state()
+        bundled = models.is_bundled(self.info.key)
+        self.progress.setVisible(st == "downloading")
+        self.cancel_btn.setVisible(st == "downloading")
+        self.download_btn.setVisible(st == "absent")
+        self.activate_btn.setVisible(st == "ready")
+        self.redownload_btn.setVisible(st == "corrupt")
+        self.badge.setVisible(st == "active")
+        self.delete_btn.setVisible(st in ("ready", "active", "corrupt") and not bundled)
+        self.status_label.setVisible(st in ("corrupt", "ready"))
+        self.status_label.setText({
+            "corrupt": "⚠️ Файл повреждён — скачайте заново",
+            "ready": "Скачана, не активна",
+        }.get(st, ""))
+        self.setProperty("active", st == "active")
         self.style().unpolish(self)
         self.style().polish(self)
 
-    def _action(self):
-        if models.is_downloaded(self.info.key):
-            s = settings_store.load()
-            s["model"] = self.info.key
-            settings_store.save(s)
-            self.page.refresh_rows()
-        else:
-            self.worker = DownloadWorker(self.info.key, self)
-            self.worker.progress.connect(self._on_progress)
-            self.worker.done.connect(self._on_done)
-            self.worker.failed.connect(self._on_failed)
-            self.worker.start()
-            self.refresh()
+    def _download(self):
+        self.worker = DownloadWorker(self.info.key, self)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.done.connect(self._on_done)
+        self.worker.failed.connect(self._on_failed)
+        self.worker.start()
+        self.refresh()
+
+    def _redownload(self):
+        models.delete_model(self.info.key)
+        self._download()
+
+    def _activate(self):
+        s = settings_store.load()
+        s["model"] = self.info.key
+        settings_store.save(s)
+        self.page.refresh_rows()
 
     def _cancel(self):
         if self.worker:
             self.worker.cancel_event.set()
+
+    def _delete(self):
+        if QMessageBox.question(self, "Удалить модель",
+                                f"Удалить модель «{self.info.title}» с диска?") == QMessageBox.Yes:
+            models.delete_model(self.info.key)
+            self.page.refresh_rows()
 
     def _on_progress(self, done: int, total: int):
         self.progress.setMaximum(100)
@@ -140,11 +167,7 @@ class ModelRow(QFrame):
     def _on_failed(self, msg: str):
         self.worker = None
         self.page.show_error(msg)
-        self.page.refresh_rows()
-
-    def _delete(self):
-        models.delete_model(self.info.key)
-        self.page.refresh_rows()
+        self.refresh()
 
 
 class ModelsPage(QWidget):
@@ -156,8 +179,10 @@ class ModelsPage(QWidget):
 
         title = QLabel("Модели распознавания")
         title.setObjectName("h1")
-        sub = QLabel("Скачайте модель и нажмите «Активировать». Активная модель используется для расшифровки.")
+        sub = QLabel("Скачайте модель и нажмите «Активировать». Активная используется для расшифровки. "
+                     "Если связь прервётся — загрузка продолжится с места обрыва.")
         sub.setObjectName("subtitle")
+        sub.setWordWrap(True)
         outer.addWidget(title)
         outer.addWidget(sub)
 

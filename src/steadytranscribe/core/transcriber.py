@@ -73,7 +73,12 @@ class Transcriber:
             raise TranscribeError(
                 f"Модель «{model_name}» не скачана.\n"
                 "Откройте страницу «Модели» и нажмите «Скачать» у нужной модели.")
-        status_cb("Подготовка модели…", 0.1)
+        if not model_store.is_intact(model_name):
+            raise TranscribeError(
+                f"Файл модели «{model_name}» повреждён (скачался не полностью).\n"
+                "Откройте «Модели», удалите её и скачайте заново — "
+                "загрузка теперь продолжается с места обрыва.")
+        status_cb("Загрузка модели в память…", 0.1)
         from faster_whisper import WhisperModel
 
         dev = "auto" if device == "auto" else device

@@ -1,6 +1,6 @@
 ; Inno Setup — установщик SteadyTranscribe для Windows 10/11
 #define AppName "SteadyTranscribe"
-#define AppVersion "1.3.0"
+#define AppVersion "1.3.1"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -14,7 +14,11 @@ AppSupportURL={#AppURL}
 AppContact={#AppPublisher}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
+#ifdef WITHMODEL
+OutputBaseFilename=SteadyTranscribe-Setup-{#AppVersion}-with-model
+#else
 OutputBaseFilename=SteadyTranscribe-Setup-{#AppVersion}
+#endif
 Compression=lzma2
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -27,6 +31,9 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 
 [Files]
 Source: "..\dist\SteadyTranscribe\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+#ifdef WITHMODEL
+Source: "..\model-bundle\*"; DestDir: "{app}\models"; Flags: recursesubdirs ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"

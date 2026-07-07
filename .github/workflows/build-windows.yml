@@ -43,12 +43,28 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/SteadyTranscribe/diarization | Out-Null
           Copy-Item assets/diarization/* dist/SteadyTranscribe/diarization/
 
-      - name: Build installer (Inno Setup)
+      - name: Build installer (лёгкий, без модели)
         shell: pwsh
         run: |
           & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" packaging\installer.iss
 
-      - name: Upload installer artifact
+      - name: Download base model (large-v3-turbo) for full installer
+        shell: pwsh
+        run: |
+          $repo = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
+          $dir = "model-bundle/large-v3-turbo"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          foreach ($f in @("config.json","model.bin","tokenizer.json","vocabulary.json","preprocessor_config.json")) {
+            Invoke-WebRequest -Uri "https://huggingface.co/$repo/resolve/main/$f" -OutFile "$dir/$f"
+          }
+          # встроенная модель считается целой без метки (её собрали мы)
+
+      - name: Build installer (полный, с моделью)
+        shell: pwsh
+        run: |
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DWITHMODEL packaging\installer.iss
+
+      - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         with:
           name: SteadyTranscribe-Setup

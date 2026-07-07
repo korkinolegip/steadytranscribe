@@ -104,11 +104,23 @@ class SettingsPage(QWidget):
         urow.addWidget(page_btn)
         lay4.addLayout(urow)
         hint4 = QLabel("Программа сама проверяет обновления при запуске. "
-                       "Когда выйдет новая версия — предложит скачать.")
+                       "Когда выйдет новая версия — предложит скачать и установит сама.")
         hint4.setObjectName("hint")
         hint4.setWordWrap(True)
         lay4.addWidget(hint4)
         outer.addWidget(box4)
+
+        # --- Помощь / отчёт о проблеме ---
+        box5, lay5 = card("Помощь")
+        report_btn = QPushButton("🐞 Сообщить о проблеме (отправить лог)")
+        report_btn.clicked.connect(self._report)
+        lay5.addWidget(report_btn)
+        hint5 = QLabel("Откроется страница с уже заполненным отчётом (версия, система, лог). "
+                       "Нажмите «Create» — разработчик увидит проблему и починит.")
+        hint5.setObjectName("hint")
+        hint5.setWordWrap(True)
+        lay5.addWidget(hint5)
+        outer.addWidget(box5)
 
         note = QLabel("Модель распознавания выбирается на странице «Модели». "
                       "Всё локально: файлы и текст не покидают компьютер.")
@@ -128,6 +140,10 @@ class SettingsPage(QWidget):
             "history_limit": self.history_spin.value(),
         })
         store.save(s)
+
+    def _report(self):
+        from .. import feedback
+        feedback.send_report(self, title="Проблема в SteadyTranscribe")
 
     def _check_updates(self):
         self.update_status.setText("Проверяю…")
