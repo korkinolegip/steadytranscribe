@@ -3,3 +3,4 @@ faster-whisper>=1.1
 huggingface_hub>=0.24
 sherpa-onnx>=1.10
 soundfile>=0.12
+py-cpuinfo>=9.0

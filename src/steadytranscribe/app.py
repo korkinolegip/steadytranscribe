@@ -6,11 +6,29 @@ import platform
 import sys
 import traceback
 
-# Максимальная совместимость с процессором: заставляем движок распознавания
-# использовать безопасный набор инструкций. Без этого на процессорах без AVX2
-# приложение падало молча (нативный крах при первом же распознавании).
-os.environ.setdefault("CT2_FORCE_CPU_ISA", "GENERIC")
 os.environ.setdefault("CT2_USE_MKL", "0")
+
+
+def _detect_cpu() -> str:
+    """Определяет ускорение процессора и настраивает движок распознавания:
+    мощный CPU (AVX2) → быстрый режим; слабый → совместимый (работает везде).
+    Возвращает выбранный режим для лога/настроек."""
+    try:
+        from cpuinfo import get_cpu_info
+        flags = set(get_cpu_info().get("flags", []))
+    except Exception:  # noqa: BLE001 — не смогли определить → безопасный режим
+        os.environ["CT2_FORCE_CPU_ISA"] = "GENERIC"
+        return "generic"
+    if "avx2" in flags:
+        return "avx2"                        # быстрый режим — ISA не форсируем
+    if "avx" in flags:
+        os.environ["CT2_FORCE_CPU_ISA"] = "AVX"
+        return "avx"
+    os.environ["CT2_FORCE_CPU_ISA"] = "GENERIC"
+    return "generic"
+
+
+CPU_MODE = _detect_cpu()
 
 from .storage.settings import app_data_dir
 
@@ -31,7 +49,8 @@ def _selftest(audio_path: str) -> int:
     """Прогон транскрипции без GUI — для проверки собранного exe в CI.
     Только ASCII в выводе (консоль Windows = cp1252)."""
     faulthandler.enable()
-    print("SELFTEST: start", flush=True)
+    print(f"SELFTEST: start CPU_MODE={CPU_MODE} ISA={os.environ.get('CT2_FORCE_CPU_ISA','fast')}",
+          flush=True)
     from .core import convert
     from .core.transcriber import Transcriber
     print("SELFTEST: imports ok", flush=True)
@@ -64,9 +83,16 @@ def main():
     logging.info("=== SteadyTranscribe запуск ===")
     try:
         import multiprocessing
-        logging.info("CPU=%s cores=%s ISA=%s OS=%s",
-                     platform.processor(), multiprocessing.cpu_count(),
-                     os.environ.get("CT2_FORCE_CPU_ISA"), platform.platform())
+        logging.info("CPU=%s cores=%s режим=%s ISA=%s OS=%s",
+                     platform.processor(), multiprocessing.cpu_count(), CPU_MODE,
+                     os.environ.get("CT2_FORCE_CPU_ISA", "быстрый"), platform.platform())
+        # на слабом CPU (без AVX2) по умолчанию — лёгкая модель, если пользователь ещё не выбирал
+        from .storage import settings as _s
+        conf = _s.load()
+        if CPU_MODE == "generic" and not conf.get("onboarded"):
+            conf["model"] = "small"
+            _s.save(conf)
+            logging.info("Слабый CPU: модель по умолчанию понижена до small")
     except Exception:  # noqa: BLE001
         pass
 

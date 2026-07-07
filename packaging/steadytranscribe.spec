@@ -20,7 +20,7 @@ a = Analysis(
     binaries=binaries,
     datas=datas,
     hiddenimports=["steadytranscribe", "sherpa_onnx", "soundfile", "faster_whisper",
-                   "onnxruntime"],
+                   "onnxruntime", "cpuinfo"],
     hookspath=[],
     runtime_hooks=[],
     excludes=["tkinter", "matplotlib"],
