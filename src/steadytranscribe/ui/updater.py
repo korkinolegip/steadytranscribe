@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.20"
+CURRENT_VERSION = "1.5.21"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -294,15 +294,24 @@ class InstallerDownloader(QThread):
 
     def run(self):
         import logging
+        import time as _time
+        from ..storage import analytics
         dest = os.path.join(_updates_dir(), "SteadyTranscribe-Update.exe")
         last_err = None
+        t0 = _time.monotonic()
+        fails = 0
         for prefix in _DOWNLOAD_MIRRORS:
             url = prefix + self.url if prefix else self.url
+            src = prefix.split("//")[-1].strip("/") if prefix else "github"
             try:
                 self._download(url, dest)
                 self._verify(dest, from_mirror=bool(prefix))
                 logging.info("update: скачано и проверено (%s)",
                              prefix or "GitHub напрямую")
+                sec = max(_time.monotonic() - t0, 0.1)
+                mb = os.path.getsize(dest) / 1048576
+                analytics.track("update_dl", src=src, mb=round(mb), sec=int(sec),
+                                mb_s=round(mb / sec, 2), fails=fails)
                 self.done.emit(dest)
                 return
             except InterruptedError:
@@ -311,7 +320,10 @@ class InstallerDownloader(QThread):
             except Exception as e:  # noqa: BLE001
                 logging.error("update: источник «%s» не сработал: %s",
                               prefix or "прямой", e)
+                analytics.track("update_dl_source_fail", src=src, err=str(e)[:120])
+                fails += 1
                 last_err = e
+        analytics.track("update_dl_fail", err=str(last_err)[:160])
         self.failed.emit(f"Не удалось скачать обновление (все источники): {last_err}")
 
 

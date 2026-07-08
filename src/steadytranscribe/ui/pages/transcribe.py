@@ -518,10 +518,11 @@ class TranscribePage(QWidget):
         timings.record_transcription(self.settings["model"], result.duration,
                                      result.processing_time)
         from ...storage import analytics
+        ext = os.path.splitext(self.selected_file or "")[1].lstrip(".").lower()
         analytics.track("transcribe", audio_sec=int(result.duration),
                         proc_sec=int(result.processing_time),
                         words=len(result.text.split()), model=self.settings["model"],
-                        confidence=round(result.confidence, 2))
+                        confidence=round(result.confidence, 2), ext=ext)
         self._notify_done(name)
         self.plain_text = result.text
         self._original_text = result.text     # для «правки → словарь»
@@ -583,6 +584,7 @@ class TranscribePage(QWidget):
         # освобождаем модель распознавания из памяти — чтобы разделению хватило RAM
         # (иначе на длинных файлах Windows может «убить» приложение из-за нехватки памяти)
         self.transcriber.unload()
+        self._diar_speakers = dlg.value()
         # parent=self — см. комментарий у TranscriptionWorker (защита от краха при отмене)
         self.diar_worker = DiarizationWorker(self.wav_path, self.result.words,
                                              dlg.value(), parent=self)
@@ -612,7 +614,8 @@ class TranscribePage(QWidget):
             timings.record_diarization(self.result.duration or 0, elapsed)
             from ...storage import analytics
             analytics.track("diarize", audio_sec=int(self.result.duration or 0),
-                            proc_sec=int(elapsed))
+                            proc_sec=int(elapsed),
+                            speakers=getattr(self, "_diar_speakers", 0))
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
@@ -641,6 +644,8 @@ class TranscribePage(QWidget):
             return
         dlg = SpeakerNamesDialog(speakers, self)
         if dlg.exec():
+            from ...storage import analytics
+            analytics.track("rename_speakers")
             for sp, name in dlg.mapping().items():
                 self.dialogue_text = self.dialogue_text.replace(f"{sp}:", f"{name}:")
             self._set_text(self.dialogue_text)
@@ -651,6 +656,8 @@ class TranscribePage(QWidget):
         return self.text.toPlainText()
 
     def _copy_current(self):
+        from ...storage import analytics
+        analytics.track("copy_text")
         QGuiApplication.clipboard().setText(self._current_text())
         self.toast.adjustSize()
         self.toast.move(self.width() - self.toast.width() - 24, 12)
@@ -662,6 +669,8 @@ class TranscribePage(QWidget):
         if self.entry_id:
             history.update_text(self.entry_id, self._current_text())
             self.history_changed.emit()
+            from ...storage import analytics
+            analytics.track("save_history")
             added = self._learn_from_edits()
             msg = f"Сохранено · +{added} слов в словарь" if added else "Сохранено в историю"
             self.toast.setText(msg)
@@ -708,6 +717,8 @@ class TranscribePage(QWidget):
         return len(fresh)
 
     def _export_result(self):
+        from ...storage import analytics
+        analytics.track("export")
         if self.result and self.result_name:
             export_transcription(self, self.result_name,
                                  self._current_text(), self.result.duration,

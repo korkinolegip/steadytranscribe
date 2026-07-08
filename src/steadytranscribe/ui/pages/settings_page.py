@@ -195,6 +195,10 @@ class SettingsPage(QWidget):
             "user_dept": self.dept_box.currentText(),
         })
         store.save(s)
+        from ...storage import analytics
+        analytics.track("settings_changed", lang=s["language"],
+                        auto_update=s["auto_update"],
+                        dict_words=len([w for w in s["initial_prompt"].replace("\n", ",").split(",") if w.strip()]))
 
     def _save_dict(self):
         from PySide6.QtWidgets import QMessageBox

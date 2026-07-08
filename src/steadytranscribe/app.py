@@ -169,6 +169,12 @@ def main():
     def excepthook(exc_type, exc_value, exc_tb):
         text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
         logging.error("Необработанная ошибка:\n%s", text)
+        try:
+            from .storage import analytics
+            analytics.track("exception", err=str(exc_value)[:200])
+            analytics.flush_async()
+        except Exception:  # noqa: BLE001
+            pass
         from .ui import feedback
         box = QMessageBox(QMessageBox.Critical, "Ошибка SteadyTranscribe",
                           f"Произошла ошибка. Приложение продолжит работу.\n\n{exc_value}")

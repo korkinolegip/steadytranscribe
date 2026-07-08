@@ -150,12 +150,22 @@ def download(key: str, progress_cb, cancel_event: threading.Event) -> None:
     """Скачивает модель надёжно: прямые ссылки, зеркало-first, докачка, проверка размера.
 
     progress_cb(done_bytes, total_bytes) вызывается каждые ~256 КБ.
+    Телеметрия: старт/докачка, отказ каждого источника, скорость и итог —
+    видно удалённо, где и почему буксует установка модели у пользователя.
     """
+    import time as _time
+    from ..storage import analytics
     repo = _REPOS[key]
     dest_dir = os.path.join(models_root(), key)
     os.makedirs(dest_dir, exist_ok=True)
+    resume = any(n.endswith(".partial") for n in
+                 (os.listdir(dest_dir) if os.path.exists(dest_dir) else []))
+    analytics.track("model_dl_start", model=key, resume=resume)
+    analytics.flush_async()
+    t0 = _time.monotonic()
     errors = []
     for base in _bases(key, repo):
+        host = base.split("//")[-1].split("/")[0]
         try:
             # 1) выясняем реальные размеры (обязательные + существующие опциональные)
             plan = []  # (имя, url, размер)
@@ -172,6 +182,7 @@ def download(key: str, progress_cb, cancel_event: threading.Event) -> None:
             total = sum(s for _, _, s in plan) or 1
             # уже скачанные (целые) файлы засчитываем
             done = 0
+            fresh = 0                     # реально скачано СЕЙЧАС (для скорости)
             for name, url, size in plan:
                 path = os.path.join(dest_dir, name)
                 if os.path.exists(path) and os.path.getsize(path) == size:
@@ -180,13 +191,27 @@ def download(key: str, progress_cb, cancel_event: threading.Event) -> None:
                     continue
                 got = _download_file(url, path, size, done, total, progress_cb, cancel_event)
                 done += got
+                fresh += got
             progress_cb(total, total)
             _write_marker(dest_dir, plan)
+            sec = max(_time.monotonic() - t0, 0.1)
+            analytics.track("model_dl_done", model=key, src=host,
+                            mb=round(total / 1048576),
+                            fresh_mb=round(fresh / 1048576), sec=int(sec),
+                            mb_s=round(fresh / 1048576 / sec, 2),
+                            fails=len(errors))
+            analytics.flush_async()
             return
         except InterruptedError:
+            analytics.track("model_dl_cancel", model=key)
+            analytics.flush_async()
             raise
         except Exception as e:  # noqa: BLE001 — пробуем следующий источник
-            errors.append(f"{base.split('//')[-1].split('/')[0]}: {e}")
+            analytics.track("model_dl_source_fail", model=key, src=host,
+                            err=str(e)[:120])
+            errors.append(f"{host}: {e}")
+    analytics.track("model_dl_fail", model=key, err=errors[-1][:160] if errors else "?")
+    analytics.flush_async()
     raise RuntimeError(
         "Не удалось скачать модель. Проверьте интернет и попробуйте снова "
         "(загрузка продолжится с места обрыва).\nДетали: " + errors[-1][:180])
