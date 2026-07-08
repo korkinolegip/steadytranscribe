@@ -16,7 +16,7 @@ from ..storage import settings as settings_store
 from .pages.models import DownloadWorker
 
 # отделы SteadyControl (из внутренних проектов) + свой вариант
-DEPARTMENTS = ["ПИАР", "Внедрение", "Сопровождение", "Продажи", "Маркетинг",
+DEPARTMENTS = ["PR", "Внедрение", "Сопровождение", "Продажи", "Маркетинг",
                "Руководство", "Другое…"]
 
 INTRO = """
@@ -38,17 +38,16 @@ class OnboardingDialog(QDialog):
 
         lay = QVBoxLayout(self)
         lay.setSpacing(12)
-        text = QLabel(INTRO)
-        text.setWordWrap(True)
-        text.setTextFormat(Qt.RichText)
-        lay.addWidget(text)
-
+        self.intro = QLabel(INTRO)
+        self.intro.setWordWrap(True)
+        self.intro.setTextFormat(Qt.RichText)
+        lay.addWidget(self.intro)
 
         self.model_block = QVBoxLayout()
-        info = next(m for m in models.CATALOG if m.key == models.DEFAULT_MODEL)
-        self.model_label = QLabel(
-            f"Базовая модель: <b>{info.title}</b> (~{info.size_mb} МБ) — {info.note.lower()}.")
-        self.model_label.setTextFormat(Qt.RichText)
+        # без технических деталей (имя/вес модели) — просто и понятно
+        self.model_label = QLabel("Базовая версия — максимальное качество. "
+                                  "Скачивается один раз.")
+        self.model_label.setWordWrap(True)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.hide()
@@ -83,19 +82,26 @@ class OnboardingDialog(QDialog):
         self.worker.done.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
-        # не мешаем знакомиться с программой: уезжаем в левый нижний угол
-        self.skip_btn.setText("Свернуть (качается в фоне)")
-        self._dock_bottom_left()
+        # сворачиваемся в КОМПАКТНУЮ плашку загрузки внизу слева
+        # (ширина бокового меню, минимум текста, никаких лишних кнопок)
+        self._compact_dock()
         # следом — знакомство (имя/отдел), пока модель качается
         QTimer.singleShot(400, lambda: ensure_identity(self.parent()))
 
-    def _dock_bottom_left(self):
+    def _compact_dock(self):
+        self.setWindowTitle("Загрузка модели")
+        self.intro.hide()
+        self.download_btn.hide()
+        self.skip_btn.hide()
+        self.model_label.setText("Модель распознавания речи")
+        self.setMinimumWidth(0)
+        self.setFixedWidth(230)              # ширина бокового меню
+        self.adjustSize()
         parent = self.parent()
         if parent is None:
             return
-        self.adjustSize()
         g = parent.geometry()
-        self.move(g.x() + 12, g.y() + g.height() - self.height() - 12)
+        self.move(g.x() + 8, g.y() + g.height() - self.height() - 10)
 
     def _on_progress(self, done: int, total: int):
         mb_done, mb_total = done // 1048576, max(total // 1048576, 1)
@@ -198,10 +204,17 @@ class IdentityDialog(QDialog):
         self.accept()
 
     def closeEvent(self, event):
+        # аварийный клапан: если имя уже сохранено (например, в другом окне) —
+        # закрываемся свободно; неубиваемых окон быть не должно
+        if settings_store.load().get("user_name"):
+            self.accept()
+            event.accept()
+            return
         event.ignore()   # только через «Готово»
 
     def reject(self):
-        pass             # Esc не закрывает
+        if settings_store.load().get("user_name"):
+            self.accept()
 
     def accept(self):
         if self._overlay is not None:
@@ -211,14 +224,24 @@ class IdentityDialog(QDialog):
 
 
 def ensure_identity(parent) -> None:
-    """Показать знакомство, если имя ещё не указано (один раз на компьютер)."""
+    """Показать знакомство, если имя ещё не указано. ЗАМОК от двойного открытия:
+    окно вызывается из двух мест (кнопка «Скачать» и конец загрузки модели) —
+    без замка они накладывались (баг: второе окно нельзя было закрыть)."""
     import os
     if os.environ.get("STEADY_UITEST"):
         return
     if settings_store.load().get("user_name"):
         return
+    if parent is not None and getattr(parent, "_identity_dlg", None) is not None:
+        return                                   # уже открыто — второго не будет
     dlg = IdentityDialog(parent)
-    dlg.exec()
+    if parent is not None:
+        parent._identity_dlg = dlg
+    try:
+        dlg.exec()
+    finally:
+        if parent is not None:
+            parent._identity_dlg = None
 
 
 def maybe_show(parent) -> None:
