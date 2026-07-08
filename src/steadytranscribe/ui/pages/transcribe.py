@@ -370,7 +370,10 @@ class TranscribePage(QWidget):
         self.showing_dialogue = False
         self._cleanup_wav()
         self.settings = settings_store.load()
-        self.worker = TranscriptionWorker(self.transcriber, self.selected_file, self.settings)
+        # parent=self ОБЯЗАТЕЛЕН: без родителя Python мог удалить QThread, пока
+        # тот ещё завершается (особенно при отмене) → мгновенный крах приложения
+        self.worker = TranscriptionWorker(self.transcriber, self.selected_file,
+                                          self.settings, parent=self)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
@@ -525,7 +528,9 @@ class TranscribePage(QWidget):
         # освобождаем модель распознавания из памяти — чтобы разделению хватило RAM
         # (иначе на длинных файлах Windows может «убить» приложение из-за нехватки памяти)
         self.transcriber.unload()
-        self.diar_worker = DiarizationWorker(self.wav_path, self.result.words, dlg.value())
+        # parent=self — см. комментарий у TranscriptionWorker (защита от краха при отмене)
+        self.diar_worker = DiarizationWorker(self.wav_path, self.result.words,
+                                             dlg.value(), parent=self)
         self.diar_worker.progress.connect(self._on_progress)
         self.diar_worker.finished_ok.connect(self._on_diarized)
         self.diar_worker.failed.connect(self._on_failed)
