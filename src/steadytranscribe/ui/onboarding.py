@@ -106,6 +106,9 @@ class OnboardingDialog(QDialog):
 
 
 def maybe_show(parent) -> None:
+    import os
+    if os.environ.get("STEADY_UITEST"):
+        return   # режим фотосессии UI: модальное окно заблокировало бы съёмку
     s = settings_store.load()
     if not s.get("onboarded") or not models.is_downloaded(s.get("model", models.DEFAULT_MODEL)):
         OnboardingDialog(parent).exec()

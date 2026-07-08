@@ -162,6 +162,8 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
 
     def _start_update_flow(self, startup: bool = False):
+        if os.environ.get("STEADY_UITEST"):
+            return None   # фотосессия UI: без сети и модальных диалогов
         from ..storage import settings as settings_store
         checker = updater.UpdateChecker(self)
         auto = settings_store.load().get("auto_update", True)
