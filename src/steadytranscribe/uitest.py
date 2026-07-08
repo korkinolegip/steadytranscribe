@@ -61,5 +61,6 @@ def run_screenshots(out_dir: str) -> int:
         shot(f"{tag}-game-finish")
         game.hide_now()
 
-    print(f"SCREENSHOTS OK: {len(os.listdir(out_dir))} файлов в {out_dir}", flush=True)
+    # ASCII only: консоль Windows (cp1252) падает на кириллице
+    print(f"SCREENSHOTS OK: {len(os.listdir(out_dir))} files", flush=True)
     return 0
