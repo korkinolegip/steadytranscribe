@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.9"
+CURRENT_VERSION = "1.5.10"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -323,7 +323,7 @@ class UpdateDialog(QDialog):
         self.url = url
         self.sha256 = sha256
         self.version = version
-        self.setWindowTitle("Обновление SteadyTranscribe")
+        self.setWindowTitle("Обновление SteadyVoice")
         self.setMinimumWidth(460)
         self.downloader = None
 

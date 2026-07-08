@@ -1,6 +1,9 @@
-; Inno Setup — установщик SteadyTranscribe для Windows 10/11
-#define AppName "SteadyTranscribe"
-#define AppVersion "1.5.9"
+; Inno Setup — установщик SteadyVoice (SteadyControl) для Windows 10/11
+; ВАЖНО: AppName — только ВИДИМОЕ имя. Внутренние контракты (AppId, папка
+; установки, имя exe, имя файла установщика) зафиксированы и НЕ меняются —
+; иначе сломаются автообновления у установленных копий.
+#define AppName "SteadyVoice"
+#define AppVersion "1.5.10"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -15,7 +18,8 @@ AppContact={#AppPublisher}
 ; Установка в пользовательскую папку — БЕЗ прав администратора и БЕЗ UAC.
 ; Это делает авто-обновление тихим и убирает окна безопасности при обновлении.
 PrivilegesRequired=lowest
-DefaultDirName={localappdata}\Programs\{#AppName}
+; КОНТРАКТ: папка установки прежняя (SteadyTranscribe) — обновления поверх работают
+DefaultDirName={localappdata}\Programs\SteadyTranscribe
 DefaultGroupName={#AppName}
 #ifdef WITHMODEL
 OutputBaseFilename=SteadyTranscribe-Setup-{#AppVersion}-with-model
@@ -43,6 +47,9 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [InstallDelete]
 Type: filesandordirs; Name: "{app}\_internal"
 Type: files; Name: "{app}\SteadyTranscribe.exe"
+; ребрендинг SteadyTranscribe → SteadyVoice: убираем СТАРЫЕ ярлыки, чтобы не дублировались
+Type: files; Name: "{autodesktop}\SteadyTranscribe.lnk"
+Type: filesandordirs; Name: "{autoprograms}\SteadyTranscribe"
 
 [Files]
 Source: "..\dist\SteadyTranscribe\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion

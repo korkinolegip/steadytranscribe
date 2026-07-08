@@ -1,0 +1,13 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <rect width="256" height="256" rx="56" fill="#14161B"/>
+  <circle cx="118" cy="128" r="72" fill="none" stroke="#3AC8C6" stroke-width="12"
+          stroke-linecap="round" stroke-dasharray="390 62" transform="rotate(30 118 128)"/>
+  <text x="118" y="152" font-family="Helvetica, Arial, sans-serif" font-size="68"
+        font-weight="bold" fill="#3AC8C6" text-anchor="middle">SC</text>
+  <circle cx="175" cy="169" r="12" fill="#3AC8C6"/>
+  <g fill="none" stroke="#3AC8C6" stroke-linecap="round">
+    <path d="M 196 148 A 30 30 0 0 1 196 190" stroke-width="9"/>
+    <path d="M 213 136 A 48 48 0 0 1 213 202" stroke-width="9" opacity="0.65"/>
+    <path d="M 229 125 A 65 65 0 0 1 229 213" stroke-width="9" opacity="0.35"/>
+  </g>
+</svg>

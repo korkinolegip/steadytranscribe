@@ -23,19 +23,21 @@ from .pages.settings_page import SettingsPage
 from .pages.stats_page import StatsPage
 from .pages.transcribe import TranscribePage
 
-APP_TITLE = "Транскрипция SteadyControl"
+APP_TITLE = "SteadyVoice · SteadyControl"
 
 # (секция | None, заголовок, индекс страницы)
+# UX-порядок: главное действие — первым и без секции; рабочие материалы (история/
+# статистика) — следом; настройка нужна реже — ниже; справка — традиционно в самом низу.
 SIDEBAR = [
-    ("ИСПОЛЬЗОВАНИЕ", None, None),
     (None, "📄  Расшифровка файлов", 0),
-    (None, "❓  Как пользоваться", 5),
-    ("НАСТРОЙКА", None, None),
-    (None, "🧠  Модели", 1),
-    (None, "⚙️  Настройки", 2),
     ("АКТИВНОСТЬ", None, None),
     (None, "🕘  История", 3),
     (None, "📊  Статистика", 4),
+    ("НАСТРОЙКА", None, None),
+    (None, "⚙️  Настройки", 2),
+    (None, "🧠  Модели", 1),
+    ("ПОМОЩЬ", None, None),
+    (None, "❓  Как пользоваться", 5),
 ]
 
 
@@ -53,7 +55,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QSystemTrayIcon
         try:
             self.tray = QSystemTrayIcon(app_icon, self)
-            self.tray.setToolTip("SteadyTranscribe")
+            self.tray.setToolTip("SteadyVoice")
             self.tray.show()
         except Exception:  # noqa: BLE001
             self.tray = None
@@ -86,7 +88,7 @@ class MainWindow(QMainWindow):
             logo.setPixmap(QPixmap(logo_path).scaledToWidth(210, Qt.SmoothTransformation))
             logo.setContentsMargins(12, 14, 12, 10)
         else:
-            logo.setText("🎙 SteadyControl")
+            logo.setText("🎙 SteadyVoice")
             logo.setObjectName("appName")
         slay.addWidget(logo)
         self.nav = QListWidget()

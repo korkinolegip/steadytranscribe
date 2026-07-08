@@ -200,7 +200,7 @@ class SettingsPage(QWidget):
 
     def _report(self):
         from .. import feedback
-        feedback.send_report(self, title="Проблема в SteadyTranscribe")
+        feedback.send_report(self, title="Проблема в SteadyVoice")
 
     def _check_updates(self):
         self.update_status.setText("Проверяю…")

@@ -27,7 +27,7 @@ STEPS = """
 class OnboardingDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Добро пожаловать в SteadyTranscribe")
+        self.setWindowTitle("Добро пожаловать в SteadyVoice")
         self.setMinimumWidth(560)
         self.worker: DownloadWorker | None = None
 

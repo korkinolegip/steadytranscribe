@@ -460,7 +460,7 @@ class TranscribePage(QWidget):
             self.game.hide_now()
             self._show_error("Речь не обнаружена — файл тишины или без голоса.")
             return
-        self.game.finish("расшифровка готова!")
+        self.game.finish("Расшифровка готова — пора работать!")
         # запоминаем реальное время расшифровки — прогноз следующих файлов точнее
         timings.record_transcription(self.settings["model"], result.duration,
                                      result.processing_time)
@@ -539,6 +539,7 @@ class TranscribePage(QWidget):
         self.diar_worker.start()
         self._refresh()
         self.progress_card.show()
+        self.game.begin()          # таймкиллер и на время разделения
 
     def _on_diarized(self, dialogue: str):
         self.diar_worker = None
@@ -552,6 +553,7 @@ class TranscribePage(QWidget):
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
+        self.game.finish("Собеседники определены — пора работать!")
         self._refresh()
 
     def _toggle_view(self):

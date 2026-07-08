@@ -53,6 +53,9 @@ FEATURES = [
     ("🔒", "Полная приватность",
      "Аудио и текст никогда не покидают компьютер. Никаких серверов, "
      "подходит для конфиденциальных встреч."),
+    ("🎁", "Сюрприз на время ожидания",
+     "Запустите расшифровку длинной записи — и пока ИИ работает, вас ждёт "
+     "небольшой приятный бонус. Какой — не скажем, попробуйте 😉"),
 ]
 
 # (иконка, проблема, решение)
@@ -147,7 +150,7 @@ class HelpPage(QWidget):
         hero.setObjectName("hero")
         hlay = QVBoxLayout(hero)
         hlay.setSpacing(8)
-        htitle = QLabel("Транскрипция SteadyControl")
+        htitle = QLabel("SteadyVoice")
         htitle.setObjectName("heroTitle")
         hsub = QLabel("Превращает записи встреч в текст — точно, локально и приватно. "
                       "Ниже — как пользоваться и что программа умеет.")
@@ -238,9 +241,9 @@ class HelpPage(QWidget):
             eff.setOpacity(0.0)
             w.setGraphicsEffect(eff)
             anim = QPropertyAnimation(eff, b"opacity", self)
-            anim.setDuration(420)
+            anim.setDuration(560)
             anim.setStartValue(0.0)
             anim.setEndValue(1.0)
             anim.setEasingCurve(QEasingCurve.OutCubic)
             self._anims.append(anim)
-            QTimer.singleShot(90 * i, anim.start)
+            QTimer.singleShot(130 * i, anim.start)
