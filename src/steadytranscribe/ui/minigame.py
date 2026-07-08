@@ -471,7 +471,8 @@ class MiniGame(QWidget):
         f.setBold(True)
         p.setFont(f)
         p.setPen(ACCENT)
-        p.drawText(QRectF(0, 10, w, 66), Qt.AlignCenter, "🏁 GAME OVER")
+        # без эмодзи-флажка: на Windows он рисуется чёрно-белой «шахматкой»
+        p.drawText(QRectF(0, 10, w, 66), Qt.AlignCenter, "GAME OVER")
 
         t2 = self._clamp01((t - 0.22) / 0.30)
         rise = (1 - t2) ** 2 * 20

@@ -75,6 +75,7 @@ TROUBLES = [
 def _step_card(num: int, emoji: str, title: str, desc: str) -> QFrame:
     card = QFrame()
     card.setObjectName("stepCard")
+    card.setMinimumWidth(10)     # разрешаем сжатие на узких окнах (тексты переносятся)
     lay = QVBoxLayout(card)
     lay.setContentsMargins(16, 16, 16, 16)
     lay.setSpacing(8)
@@ -138,6 +139,9 @@ class HelpPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        # без горизонтальной прокрутки: на узком окне карточки сжимаются,
+        # а не уезжают за край (найдено фотосессией UI на 800×500)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         content = QWidget()
         col = QVBoxLayout(content)
         col.setContentsMargins(24, 20, 24, 28)
