@@ -114,6 +114,14 @@ class SettingsPage(QWidget):
             status_txt = f"Текущая версия: {updater.CURRENT_VERSION}"
         self.update_status = QLabel(status_txt)
         self.update_status.setObjectName("hint")
+        # «Что нового» — по-человечески, только польза (см. changelog.py)
+        from ..changelog import whats_new
+        note = whats_new(updater.CURRENT_VERSION)
+        if note:
+            news = QLabel(f"✨ В этой версии: {note}")
+            news.setObjectName("hint")
+            news.setWordWrap(True)
+            lay4.addWidget(news)
         check_btn = QPushButton("Проверить обновления")
         check_btn.clicked.connect(self._check_updates)
         page_btn = QPushButton("Страница релизов")

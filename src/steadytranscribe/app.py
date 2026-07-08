@@ -106,6 +106,11 @@ def main():
     if "--diarize" in sys.argv:
         idx = sys.argv.index("--diarize")
         sys.exit(_run_diarize(sys.argv[idx + 1], int(sys.argv[idx + 2])))
+    if "--screenshots" in sys.argv:
+        # UI-фотосессия для проверки глазами перед релизом (см. uitest.py)
+        idx = sys.argv.index("--screenshots")
+        from .uitest import run_screenshots
+        sys.exit(run_screenshots(sys.argv[idx + 1]))
 
     # Отложенное обновление с прошлого сеанса? Ставим ДО открытия окна:
     # установщик тихо обновит программу и сам запустит новую версию.

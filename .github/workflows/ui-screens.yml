@@ -1,0 +1,36 @@
+name: UI Screenshots
+
+# Фотосессия интерфейса на реальной Windows: каждая страница на минимальном
+# (800×500) и обычном (1280×800) окне + все состояния мини-игры.
+# ПРАВИЛО (от Олега): перед каждым релизом с изменениями UI разработчик
+# скачивает артефакт и СМОТРИТ снимки глазами — наезды текста, обрезанные
+# кнопки и кривой UX ловятся ДО пользователей.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps (только UI, без тяжёлых моделей)
+        run: pip install -r requirements.txt
+
+      - name: Take screenshots
+        shell: pwsh
+        env:
+          PYTHONPATH: src
+        run: |
+          python -m steadytranscribe.app --screenshots shots
+          Get-ChildItem shots
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-screenshots
+          path: shots/*.png

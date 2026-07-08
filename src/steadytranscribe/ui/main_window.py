@@ -124,9 +124,13 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.stack, stretch=1)
         self.setCentralWidget(root)
 
-        # выбрать «Расшифровка файлов»
+        # стартовая страница: при САМОМ ПЕРВОМ запуске после установки — красиво
+        # открываем «Как пользоваться» (с анимацией); дальше всегда «Расшифровка».
+        from ..storage import settings as _settings
+        first_run = not _settings.load().get("onboarded")
+        start_page = 5 if first_run else 0
         for i in range(self.nav.count()):
-            if self.nav.item(i).data(Qt.UserRole) == 0:
+            if self.nav.item(i).data(Qt.UserRole) == start_page:
                 self.nav.setCurrentRow(i)
                 break
 
@@ -195,10 +199,13 @@ class MainWindow(QMainWindow):
         settings_store.save(s)
         if prev and self.tray is not None:   # prev пуст = самая первая установка
             from PySide6.QtWidgets import QSystemTrayIcon
-            self.tray.showMessage(
-                "Программа обновлена",
-                f"Установлена версия {updater.CURRENT_VERSION}. Всё прошло успешно.",
-                QSystemTrayIcon.Information, 5000)
+            from .changelog import whats_new
+            note = whats_new(updater.CURRENT_VERSION)
+            body = f"Установлена версия {updater.CURRENT_VERSION}."
+            if note:
+                body += f"\n✨ {note}"       # по-человечески, без технических деталей
+            self.tray.showMessage("Программа обновлена", body,
+                                  QSystemTrayIcon.Information, 7000)
 
     def _on_update_found(self, version: str, url: str, sha: str = ""):
         """Авто-режим: тихо скачиваем установщик в фоне, не мешая работе."""
