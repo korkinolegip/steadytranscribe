@@ -119,7 +119,11 @@ class SpeakerCountDialog(QDialog):
 
 
 class SpeakerNamesDialog(QDialog):
-    """Переименование «Собеседник N» в реальные имена."""
+    """Имена собеседников: и первичное, и ПОВТОРНОЕ переименование.
+
+    Уже названные показываются в поле как есть — опечатку можно поправить
+    (раньше после первого переименования диалог больше не открывался:
+    искали только «Собеседник N», а их в тексте уже не было)."""
 
     def __init__(self, speakers: list[str], parent=None):
         super().__init__(parent)
@@ -129,7 +133,10 @@ class SpeakerNamesDialog(QDialog):
         self.edits: dict[str, QLineEdit] = {}
         for sp in speakers:
             edit = QLineEdit()
-            edit.setPlaceholderText("Например: Ирина")
+            if re.fullmatch(r"Собеседник \d+", sp):
+                edit.setPlaceholderText("Например: Ирина")
+            else:
+                edit.setText(sp)          # уже назван — правим существующее имя
             form.addRow(f"{sp}:", edit)
             self.edits[sp] = edit
         lay.addLayout(form)
@@ -141,7 +148,8 @@ class SpeakerNamesDialog(QDialog):
         lay.addWidget(buttons)
 
     def mapping(self) -> dict[str, str]:
-        return {sp: e.text().strip() for sp, e in self.edits.items() if e.text().strip()}
+        return {sp: e.text().strip() for sp, e in self.edits.items()
+                if e.text().strip() and e.text().strip() != sp}
 
 
 class TranscribePage(QWidget):
@@ -678,8 +686,13 @@ class TranscribePage(QWidget):
 
     def _rename_speakers(self):
         self._stash_edits()
-        speakers = sorted(set(re.findall(r"Собеседник \d+", self.dialogue_text or "")),
-                          key=lambda s: int(s.split()[-1]))
+        # подписи говорящих — из САМОГО диалога (не только «Собеседник N»):
+        # так имена можно менять сколько угодно раз, в порядке появления
+        speakers: list[str] = []
+        for line in (self.dialogue_text or "").splitlines():
+            m = re.match(r"([^:\n]{1,40}):\s", line)
+            if m and m.group(1) not in speakers:
+                speakers.append(m.group(1))
         if not speakers:
             return
         dlg = SpeakerNamesDialog(speakers, self)
@@ -687,7 +700,9 @@ class TranscribePage(QWidget):
             from ...storage import analytics
             analytics.track("rename_speakers")
             for sp, name in dlg.mapping().items():
-                self.dialogue_text = self.dialogue_text.replace(f"{sp}:", f"{name}:")
+                # замена только в НАЧАЛЕ реплики — тексты реплик не трогаем
+                self.dialogue_text = re.sub(
+                    rf"^{re.escape(sp)}:", f"{name}:", self.dialogue_text, flags=re.M)
             self._set_text(self.dialogue_text)
 
     # ---------- копирование/экспорт/сохранение ----------

@@ -18,7 +18,7 @@ import os
 import sys
 from dataclasses import dataclass
 
-from .transcriber import Segment, Word
+from .transcriber import Word
 
 
 @dataclass
@@ -213,16 +213,64 @@ def _speaker_at(t: float, turns: list[SpeakerTurn]) -> int:
     return best
 
 
+_SENT_END = (".", "!", "?", "…")
+
+
+def _fix_boundaries(assigned: list[int], words: list[Word]) -> list[int]:
+    """Чинит стыки реплик по границам ПРЕДЛОЖЕНИЙ.
+
+    Таймкоды whisper на первых словах после паузы систематически съезжают,
+    поэтому у говорящего оставались хвосты чужого начала («…заявку. С» |
+    «каким вопросом…» — «С» прилипла к предыдущему). Правила (консервативно,
+    двигаем не больше 3 коротких слов):
+    1. хвост ПОСЛЕ точки в конце реплики → следующему говорящему;
+    2. если реплика начинается ОБРЫВКОМ чужого предложения (1–3 слова до
+       точки, дальше реплика продолжается) → обрывок предыдущему.
+    """
+    out = list(assigned)
+    n = len(words)
+    # границы групп подряд идущих слов одного говорящего
+    starts = [0] + [i for i in range(1, n) if out[i] != out[i - 1]]
+    for gi, g_start in enumerate(starts):
+        g_end = starts[gi + 1] - 1 if gi + 1 < len(starts) else n - 1
+        # --- правило 1: хвост после конца предложения ---
+        if gi + 1 < len(starts):
+            last_sent_end = -1
+            for i in range(g_start, g_end + 1):
+                if words[i].text.strip().endswith(_SENT_END):
+                    last_sent_end = i
+            tail = g_end - last_sent_end
+            if last_sent_end >= 0 and 0 < tail <= 3:
+                for i in range(last_sent_end + 1, g_end + 1):
+                    out[i] = out[g_end + 1]
+        # --- правило 2: обрывок чужого предложения в начале реплики ---
+        if gi > 0:
+            first_sent_end = -1
+            for i in range(g_start, min(g_start + 3, g_end + 1)):
+                if words[i].text.strip().endswith(_SENT_END):
+                    first_sent_end = i
+                    break
+            # обрывок = короткое завершение предложения, при этом реплика
+            # продолжается дальше (иначе это цельная короткая вставка — не трогаем)
+            if first_sent_end >= 0 and first_sent_end < g_end:
+                prev_last = words[g_start - 1].text.strip()
+                if not prev_last.endswith(_SENT_END):   # предложение начато там
+                    for i in range(g_start, first_sent_end + 1):
+                        out[i] = out[g_start - 1]
+    return out
+
+
 def build_dialogue(words: list[Word], turns: list[SpeakerTurn]) -> str:
     """Собирает диалог по СЛОВАМ: каждое слово относим к говорящему в его момент.
-    Так короткие реплики-вставки («да», «угу») попадают правильному собеседнику."""
+    Так короткие реплики-вставки («да», «угу») попадают правильному собеседнику.
+    Стыки реплик выравниваются по границам предложений (_fix_boundaries)."""
     if not words:
         return ""
+    assigned = [_speaker_at((w.start + w.end) / 2, turns) for w in words]
+    assigned = _fix_boundaries(assigned, words)
     lines: list[str] = []
     current, buf = None, []
-    for w in words:
-        mid = (w.start + w.end) / 2
-        speaker = _speaker_at(mid, turns)
+    for w, speaker in zip(words, assigned):
         if speaker != current:
             if buf:
                 lines.append(f"Собеседник {current + 1}: " + "".join(buf).strip())
