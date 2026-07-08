@@ -3,7 +3,7 @@
 ; установки, имя exe, имя файла установщика) зафиксированы и НЕ меняются —
 ; иначе сломаются автообновления у установленных копий.
 #define AppName "SteadyVoice"
-#define AppVersion "1.5.17"
+#define AppVersion "1.5.18"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -79,9 +79,18 @@ Filename: "{app}\SteadyTranscribe.exe"; Flags: nowait runasoriginaluser; Check: 
 ; кэш Python и пр., которые иначе не давали удалить папку) и настройки/логи.
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+; личность и аналитика стираются ВСЕГДА: удалил программу -> устройство выбыло
+; из базы; переустановка = регистрация заново новым устройством (логика Олега)
 Type: files; Name: "{userappdata}\SteadyTranscribe\settings.json"
+Type: files; Name: "{userappdata}\SteadyTranscribe\device_id"
+Type: files; Name: "{userappdata}\SteadyTranscribe\analytics-queue.jsonl"
+Type: files; Name: "{userappdata}\SteadyTranscribe\analytics-log.jsonl"
+Type: files; Name: "{userappdata}\SteadyTranscribe\game.json"
+Type: files; Name: "{userappdata}\SteadyTranscribe\timings.json"
 Type: files; Name: "{userappdata}\SteadyTranscribe\log.txt"
 Type: files; Name: "{userappdata}\SteadyTranscribe\crash.txt"
+Type: files; Name: "{userappdata}\SteadyTranscribe\install.log"
+Type: filesandordirs; Name: "{userappdata}\SteadyTranscribe\updates"
 
 [Code]
 // Есть ли параметр в командной строке установщика (регистр не важен)
@@ -117,6 +126,9 @@ begin
   begin
     // жёстко завершаем все процессы приложения
     Exec('taskkill.exe', '/F /IM SteadyTranscribe.exe /T', '',
+         SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    // сообщаем аналитике: это устройство удалено (до удаления файлов)
+    Exec(ExpandConstant('{app}\SteadyTranscribe.exe'), '--uninstall-ping', '',
          SW_HIDE, ewWaitUntilTerminated, ResultCode);
     DataDir := ExpandConstant('{userappdata}\SteadyTranscribe');
     if DirExists(DataDir) then

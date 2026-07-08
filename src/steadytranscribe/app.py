@@ -111,6 +111,16 @@ def main():
         idx = sys.argv.index("--screenshots")
         from .uitest import run_screenshots
         sys.exit(run_screenshots(sys.argv[idx + 1]))
+    if "--uninstall-ping" in sys.argv:
+        # вызывается деинсталлятором: помечаем это устройство удалённым
+        # в аналитике (пользователь без устройств исчезает из базы целиком)
+        try:
+            from .storage import analytics
+            analytics.track("uninstalled")
+            analytics.flush(timeout=6)
+        except Exception:  # noqa: BLE001
+            pass
+        sys.exit(0)
 
     # Отложенное обновление с прошлого сеанса? Ставим ДО открытия окна:
     # установщик тихо обновит программу и сам запустит новую версию.
