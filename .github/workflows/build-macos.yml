@@ -68,6 +68,17 @@ jobs:
           codesign --force --deep -s - dist-mac/SteadyVoice.app
           codesign --verify --deep dist-mac/SteadyVoice.app && echo "подпись ок"
 
+      - name: Модель tiny для смоук-теста
+        shell: bash
+        run: |
+          MDIR="$HOME/Library/Application Support/SteadyTranscribe/models/tiny"
+          mkdir -p "$MDIR"
+          for f in config.json model.bin tokenizer.json vocabulary.txt; do
+            curl -sSL --retry 3 -o "$MDIR/$f" \
+              "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/$f"
+          done
+          ls -la "$MDIR"
+
       - name: Смоук-тест собранного приложения (--selftest)
         shell: bash
         run: |
