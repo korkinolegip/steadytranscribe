@@ -30,25 +30,30 @@ def _score_path() -> str:
     return os.path.join(app_data_dir(), "game.json")
 
 
-def _load_high() -> int:
+def _load_scores() -> tuple[int, int]:
+    """(рекорд, счёт прошлой игры)."""
     try:
         with open(_score_path(), encoding="utf-8") as f:
-            return int(json.load(f).get("high", 0))
+            d = json.load(f)
+        return int(d.get("high", 0)), int(d.get("last", 0))
     except (OSError, ValueError):
-        return 0
+        return 0, 0
 
 
-def _save_high(high: int) -> None:
+def _save_scores(high: int, last: int) -> None:
     try:
         with open(_score_path(), "w", encoding="utf-8") as f:
-            json.dump({"high": high}, f)
+            json.dump({"high": high, "last": last}, f)
     except OSError:
         pass
 
 
 class MiniGame(QWidget):
-    """Состояния: ready (ждём первый прыжок) → run → dead (можно заново).
-    finish() — расшифровка готова: анимация «Пора работать!», затем сам скрывается."""
+    """Состояния: invite (компактный призыв «сыграть?») → ready (ждём первый
+    прыжок) → run → dead (повторные попытки). finish() — расшифровка готова:
+    анимация «GAME OVER — пора работать!» ~2 с, затем сам скрывается."""
+
+    _H_INVITE = 46                           # компактный призыв, игра не навязывается
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,7 +63,7 @@ class MiniGame(QWidget):
         self._timer = QTimer(self)
         self._timer.setInterval(16)          # ~60 кадров/с
         self._timer.timeout.connect(self._tick)
-        self._high = _load_high()
+        self._high, self._last = _load_scores()
         self._reset()
         self._finish_phase = -1.0            # >=0 → идёт финальная анимация
         self._finish_text = ""
@@ -66,25 +71,36 @@ class MiniGame(QWidget):
     # ---------- управление из страницы ----------
 
     def begin(self):
-        """Показать игру на время ожидания."""
+        """Показать ПРИЗЫВ сыграть (сама игра не запускается — только по клику)."""
         self._reset()
         self._finish_phase = -1.0
+        self._state = "invite"
+        self.setFixedHeight(self._H_INVITE)
         self.show()
+        self.update()
+
+    def _expand(self):
+        """Пользователь согласился сыграть — разворачиваем поле."""
+        self.setFixedHeight(_H)
+        self._state = "ready"
+        self.setFocus()
         self._timer.start()
+        self.update()
 
     def finish(self, text: str = "Пора работать!"):
-        """Расшифровка готова: если играли — «Game over, пора работать» с анимацией,
-        иначе просто убрать поле."""
+        """Расшифровка готова: если играли — «Game over, пора работать» с анимацией
+        ~2 секунды, иначе просто убрать поле."""
         if not self.isVisible():
             return
-        if self._state == "ready":           # никто не играл — уходим тихо
+        if self._state in ("invite", "ready"):   # не играли — уходим тихо
             self.hide_now()
             return
         self._save_record()
         self._finish_text = text
         self._finish_phase = 0.0
         self._state = "finish"
-        QTimer.singleShot(2600, self.hide_now)
+        self._timer.start()
+        QTimer.singleShot(2000, self.hide_now)
 
     def hide_now(self):
         self._timer.stop()
@@ -113,9 +129,9 @@ class MiniGame(QWidget):
             self._state = "run"
 
     def _save_record(self):
-        if self._score > self._high:
-            self._high = self._score
-            _save_high(self._high)
+        self._last = self._score
+        self._high = max(self._high, self._score)
+        _save_scores(self._high, self._last)
 
     def _tick(self):
         if self._state == "finish":
@@ -164,11 +180,17 @@ class MiniGame(QWidget):
 
     def mousePressEvent(self, event):
         self.setFocus()
-        self._jump()
+        if self._state == "invite":
+            self._expand()
+        else:
+            self._jump()
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Space, Qt.Key_Up):
-            self._jump()
+            if self._state == "invite":
+                self._expand()
+            else:
+                self._jump()
         else:
             super().keyPressEvent(event)
 
@@ -178,6 +200,17 @@ class MiniGame(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         w = self.width()
+
+        if self._state == "invite":
+            # компактный призыв — игра не навязывается
+            f = QFont()
+            f.setPointSize(11)
+            p.setFont(f)
+            p.setPen(ACCENT)
+            rec = f"  ·  ваш рекорд: {self._high}" if self._high else ""
+            p.drawText(self.rect(), Qt.AlignCenter,
+                       f"🎮 Ожидание веселее с игрой — нажмите, чтобы сыграть{rec}")
+            return
 
         # земля
         p.setPen(QPen(GROUND, 2))
@@ -214,8 +247,9 @@ class MiniGame(QWidget):
         # подсказки
         hint = None
         if self._state == "ready":
-            hint = ("🎮 Пока ИИ расшифровывает — проведите робота через смену!  "
-                    "Пробел или клик — прыжок")
+            last = f"  ·  прошлый раз: {self._last}" if self._last else ""
+            hint = ("🎮 Проведите робота через смену!  "
+                    f"Пробел или клик — прыжок{last}")
         elif self._state == "dead":
             hint = f"💥 Контроль потерян! {self._score} очков.  Пробел — вернуть контроль"
         elif self._state == "run":

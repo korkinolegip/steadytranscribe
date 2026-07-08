@@ -539,7 +539,6 @@ class TranscribePage(QWidget):
         self.diar_worker.start()
         self._refresh()
         self.progress_card.show()
-        self.game.begin()          # таймкиллер и на время разделения
 
     def _on_diarized(self, dialogue: str):
         self.diar_worker = None
@@ -553,7 +552,6 @@ class TranscribePage(QWidget):
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
-        self.game.finish("собеседники определены!")
         self._refresh()
 
     def _toggle_view(self):
