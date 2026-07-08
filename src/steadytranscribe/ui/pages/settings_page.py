@@ -66,6 +66,19 @@ class SettingsPage(QWidget):
         _row(layu, "Отдел", "Подразделение SteadyControl.", self.dept_box)
         outer.addWidget(boxu)
 
+        # --- Запомненные голоса ---
+        self._voices_box, self._voices_lay = card("Запомненные голоса")
+        vdesc = QLabel("Программа узнаёт этих людей по голосу в новых записях. "
+                       "Всё хранится только на этом компьютере (без аудио), "
+                       "любой голос можно удалить.")
+        vdesc.setObjectName("hint")
+        vdesc.setWordWrap(True)
+        self._voices_lay.addWidget(vdesc)
+        self._voices_list = QVBoxLayout()
+        self._voices_lay.addLayout(self._voices_list)
+        self._refresh_voices()
+        outer.addWidget(self._voices_box)
+
         # --- Распознавание ---
         box, lay = card("Распознавание")
         self.lang_box = QComboBox()
@@ -183,6 +196,48 @@ class SettingsPage(QWidget):
         outer.addStretch()
 
         self._checker = None
+
+    def _refresh_voices(self):
+        # очистить список
+        while self._voices_list.count():
+            item = self._voices_list.takeAt(0)
+            lay = item.layout()
+            if lay is not None:
+                while lay.count():
+                    w = lay.takeAt(0).widget()
+                    if w:
+                        w.deleteLater()
+            elif item.widget():
+                item.widget().deleteLater()
+        from ...storage import voices as voices_store
+        names = voices_store.all_names()
+        if not names:
+            empty = QLabel("Пока никого. Назовите собеседника в расшифровке — "
+                           "и его голос запомнится.")
+            empty.setObjectName("hint")
+            empty.setWordWrap(True)
+            self._voices_list.addWidget(empty)
+            self._voices_box.setVisible(True)
+            return
+        for name in names:
+            row = QHBoxLayout()
+            lbl = QLabel(f"🗣 {name}")
+            forget = QPushButton("Удалить")
+            forget.setObjectName("danger")
+            forget.setFixedWidth(90)
+            forget.clicked.connect(lambda _=False, n=name: self._forget_voice(n))
+            row.addWidget(lbl, stretch=1)
+            row.addWidget(forget)
+            self._voices_list.addLayout(row)
+
+    def _forget_voice(self, name: str):
+        from PySide6.QtWidgets import QMessageBox
+        if QMessageBox.question(self, "Забыть голос",
+                                f"Удалить запомненный голос «{name}»? "
+                                "Программа перестанет узнавать этого человека.") == QMessageBox.Yes:
+            from ...storage import voices as voices_store
+            voices_store.forget(name)
+            self._refresh_voices()
 
     def _save(self, *_):
         s = store.load()

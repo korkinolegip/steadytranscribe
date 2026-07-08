@@ -846,14 +846,24 @@ class TranscribePage(QWidget):
                 # замена только в НАЧАЛЕ реплики — тексты реплик не трогаем
                 self.dialogue_text = re.sub(
                     rf"^{re.escape(sp)}:", f"{name}:", self.dialogue_text, flags=re.M)
-                # ЗАПОМИНАЕМ голос под этим именем — узнаем в следующих записях
-                if sp in centroids:
+                # ЗАПОМИНАЕМ голос под этим именем — узнаем в следующих записях.
+                # Только по достаточному образцу (≥3с чистой речи): короткий
+                # отпечаток шумный и ведёт к ложным узнаваниям (см. разбор голосов)
+                if sp in centroids and self._voice_sample_ok(sp):
                     voices_store.enroll(name, centroids[sp])
                 # клип и центроид «переезжают» на новое имя
                 for store in (clips, centroids):
                     if sp in store:
                         store[name] = store.pop(sp)
             self._set_text(self.dialogue_text)
+
+    def _voice_sample_ok(self, sp: str) -> bool:
+        """Достаточно ли речи для надёжного отпечатка (≥3с). Клип — int16 mono."""
+        clip = getattr(self, "_voice_clips", {}).get(sp)
+        if not clip:
+            return False
+        pcm, sr = clip
+        return len(pcm) / 2 / max(sr, 1) >= 3.0
 
     # ---------- копирование/экспорт/сохранение ----------
 
