@@ -4,3 +4,7 @@ dist/
 build/
 *.pyc
 .DS_Store
+.venv-mac/
+dist-mac*/
+build-mac/
+assets/icon.iconset/

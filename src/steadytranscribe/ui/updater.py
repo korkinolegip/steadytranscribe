@@ -29,6 +29,15 @@ CURRENT_VERSION = "1.5.21"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
+# --- Раздельные каналы обновлений (КОНТРАКТЫ, менять нельзя) ---
+# Windows: теги v*, обычные релизы, ассет SteadyTranscribe-Setup-X.Y.Z.exe.
+# macOS:   теги mac-v*, релизы ВСЕГДА prerelease (иначе станут /releases/latest
+#          и Windows-клиенты перестанут видеть свои обновления),
+#          ассет SteadyVoice-mac-X.Y.Z.zip (ditto-архив бандла SteadyVoice.app).
+_IS_MAC = sys.platform == "darwin"
+_MAC_TAG_RE = r"mac-v[\d.]+"
+_MAC_ASSET_RE = r"SteadyVoice-mac-[\d.]+\.zip"
+
 # Файловый домен GitHub (objects.githubusercontent.com) периодически блокируется
 # в РФ — сам API при этом работает. Качаем по цепочке: напрямую → через зеркала.
 # Подлинность файла с зеркала гарантирует SHA256 из описания релиза (см. ниже).
@@ -78,11 +87,17 @@ def save_pending(version: str, installer_path: str) -> None:
 
 
 def clear_pending() -> None:
-    """Убрать отложенное обновление вместе со скачанными установщиками."""
+    """Убрать отложенное обновление вместе со скачанными установщиками
+    (и каталогами распаковки на mac — после сбоя хелпера там сотни МБ)."""
+    import shutil
     try:
         for name in os.listdir(_updates_dir()):
+            p = os.path.join(_updates_dir(), name)
             try:
-                os.remove(os.path.join(_updates_dir(), name))
+                if os.path.isdir(p):
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    os.remove(p)
             except OSError:
                 pass
     except OSError:
@@ -98,14 +113,137 @@ def install_in_progress() -> bool:
     return _install_launched
 
 
+# ---------- macOS: замена .app хелпер-скриптом ----------
+
+def bundle_path() -> str | None:
+    """Путь к текущему бандлу SteadyVoice.app (None в dev-режиме/не на mac)."""
+    if not (_IS_MAC and getattr(sys, "frozen", False)):
+        return None
+    # sys.executable = .../SteadyVoice.app/Contents/MacOS/SteadyVoice
+    bundle = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(sys.executable))))
+    return bundle if bundle.endswith(".app") else None
+
+
+def can_self_update() -> bool:
+    """Может ли mac-сборка обновить сама себя: есть бандл, он не в карантинной
+    «транслокации» (запуск прямо из DMG/Загрузок) и папка доступна на запись."""
+    if not _IS_MAC:
+        return True     # Windows: решает Inno Setup
+    b = bundle_path()
+    if b is None or "/AppTranslocation/" in b:
+        return False
+    return os.access(os.path.dirname(b), os.W_OK)
+
+
+# Хелпер ждёт выхода приложения, распаковывает архив, подменяет .app и
+# (опционально) запускает новую версию. Лог — в тот же install.log, что
+# читает «Отчёт о проблеме» (feedback.py). Подмена через mv с откатом.
+# Защиты (по adversarial-ревью):
+# - лок-каталог: второй хелпер не портит работу первого, а дожидается его
+#   и просто открывает программу;
+# - при ЛЮБОЙ ошибке: маркер «вернуться свёрнутым» снимается и, если надо,
+#   старая версия открывается заново — «программа закрылась и не вернулась»
+#   исключено, ложного «Программа обновлена» не будет;
+# - откат сначала вычищает частично скопированный бандл (обрыв mv между
+#   томами), потом возвращает старую версию.
+_MAC_INSTALL_SH = """#!/bin/bash
+# Установщик обновления SteadyVoice (macOS). Генерируется программой.
+PID="$1"; ZIP="$2"; TARGET="$3"; RELAUNCH="$4"; MINIMIZED="$5"; UPDATES="$6"; LOG="$7"; MARKER="$8"
+exec >> "$LOG" 2>&1
+echo "=== $(date '+%Y-%m-%d %H:%M:%S') обновление: $ZIP -> $TARGET (relaunch=$RELAUNCH)"
+
+reopen() {  # вернуть пользователю программу, если её ждут
+  if [ "$RELAUNCH" = "1" ] && [ -d "$TARGET" ]; then /usr/bin/open "$TARGET"; fi
+}
+fail() {
+  echo "ОШИБКА: $1"
+  rm -f "$MARKER"        # не встречать пользователя ложным «Программа обновлена»
+  reopen
+  exit 1
+}
+
+for _ in $(seq 1 400); do kill -0 "$PID" 2>/dev/null || break; sleep 0.3; done
+kill -0 "$PID" 2>/dev/null && fail "приложение не закрылось за 2 мин"
+
+LOCK="$UPDATES/install.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "другой установщик уже работает — дожидаюсь его"
+  for _ in $(seq 1 600); do [ -d "$LOCK" ] || break; sleep 0.5; done
+  reopen
+  exit 0
+fi
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
+EXTRACT="$UPDATES/extract-$$"
+rm -rf "$EXTRACT"; mkdir -p "$EXTRACT"
+/usr/bin/ditto -xk "$ZIP" "$EXTRACT" || { rm -rf "$EXTRACT"; fail "ошибка распаковки архива"; }
+NEWAPP="$(/usr/bin/find "$EXTRACT" -maxdepth 2 -name '*.app' -print 2>/dev/null | head -1)"
+[ -n "$NEWAPP" ] && [ -d "$NEWAPP/Contents/MacOS" ] || { rm -rf "$EXTRACT"; fail "в архиве нет .app"; }
+
+OLD="${TARGET%.app}.old-$$.app"
+if [ -d "$TARGET" ]; then
+  mv "$TARGET" "$OLD" || { rm -rf "$EXTRACT"; fail "не удалось убрать старую версию"; }
+fi
+if mv "$NEWAPP" "$TARGET"; then
+  /usr/bin/xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null
+  rm -rf "$OLD" "$EXTRACT"
+  echo "установлено успешно"
+else
+  echo "не удалось поставить новую версию — откат"
+  rm -rf "$TARGET"       # частично скопированный бандл (обрыв между томами)
+  [ -d "$OLD" ] && mv "$OLD" "$TARGET"
+  rm -rf "$EXTRACT"
+  fail "установка не удалась, старая версия возвращена"
+fi
+if [ "$RELAUNCH" = "1" ]; then
+  if [ "$MINIMIZED" = "1" ]; then /usr/bin/open -g "$TARGET"; else /usr/bin/open "$TARGET"; fi
+fi
+"""
+
+
+def _run_mac_installer(zip_path: str, relaunch: bool) -> None:
+    """Запускает отвязанный хелпер замены .app и помечает установку начатой.
+    Хелпер сам дождётся выхода приложения — вызывающий должен закрыться."""
+    global _install_launched
+    import logging
+    bundle = bundle_path()
+    if not bundle:
+        raise OSError("обновление доступно только в установленном приложении")
+    if not can_self_update():
+        raise OSError("перенесите SteadyVoice в папку «Программы» и повторите")
+    # имя хелпера уникально на запуск: перезапись общего install.sh на лету
+    # портила скрипт уже РАБОТАЮЩЕГО хелпера (bash дочитывает файл по мере
+    # исполнения) — гонка двух установок срывала обновление
+    helper = os.path.join(_updates_dir(), f"install-{os.getpid()}.sh")
+    with open(helper, "w", encoding="utf-8") as f:
+        f.write(_MAC_INSTALL_SH)
+    os.chmod(helper, 0o755)
+    minimized = os.path.exists(_marker_path())   # вернуться свёрнутыми — open -g
+    args = ["/bin/bash", helper, str(os.getpid()), zip_path, bundle,
+            "1" if relaunch else "0", "1" if minimized else "0",
+            _updates_dir(),
+            os.path.join(app_data_dir(), "install.log"),
+            _marker_path()]
+    logging.info("update(mac): запуск хелпера %s", args)
+    subprocess.Popen(args, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _install_launched = True
+
+
 def run_installer_silent(installer_path: str, relaunch: bool = True,
                          visible: bool = False) -> None:
     """Тихая установка. relaunch=False (/NORELAUNCH) — при выходе: пользователь
     закрыл программу, не открываем её заново. visible=True (/SILENT вместо
     /VERYSILENT) — показать узкое окно прогресса установки (для ручного
-    «Обновить сейчас», чтобы было видно, что установка идёт)."""
+    «Обновить сейчас», чтобы было видно, что установка идёт).
+    macOS: хелпер-скрипт подменяет .app после выхода приложения; visible
+    не используется (замена занимает секунды, окна прогресса нет)."""
     global _install_launched
     import logging
+    if _IS_MAC:
+        _run_mac_installer(installer_path, relaunch)
+        return
     mode = "/SILENT" if visible else "/VERYSILENT"
     args = [installer_path, mode, "/SUPPRESSMSGBOXES", "/NORESTART",
             "/LOG=" + os.path.join(app_data_dir(), "install.log")]
@@ -210,34 +348,85 @@ def consume_restart_marker() -> bool:
     return False
 
 
+def _sha_from_body(body: str, asset_name: str) -> str:
+    """SHA256 из описания релиза. Сначала пофайловый формат
+    «sha256 <имя-ассета>: <hex>», затем старый «sha256: <hex>» (один файл)."""
+    import re
+    m = re.search(rf"sha256\s+{re.escape(asset_name)}:\s*([0-9a-fA-F]{{64}})",
+                  body or "")
+    if not m:
+        m = re.search(r"sha256:\s*([0-9a-fA-F]{64})", body or "")
+    return m.group(1).lower() if m else ""
+
+
 class UpdateChecker(QThread):
     """Проверяет новую версию. Отдаёт версию, URL лёгкого установщика и его SHA256
-    (из описания релиза — для проверки файла, скачанного через зеркало)."""
+    (из описания релиза — для проверки файла, скачанного через зеркало).
+
+    Windows: /releases/latest (mac-релизы туда не попадают — они prerelease).
+    macOS: список /releases, свои теги mac-v* (в т.ч. prerelease)."""
     update_available = Signal(str, str, str)
+
+    def _check_windows(self):
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/releases/latest",
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": "SteadyTranscribe"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.load(resp)
+        tag = data.get("tag_name", "")
+        if _parse_version(tag) > _parse_version(CURRENT_VERSION):
+            # ЗАДЕЛ НА БУДУЩЕЕ: сначала строгое каноничное имя лёгкого
+            # установщика (это имя — контракт, менять нельзя), затем
+            # мягкие запасные варианты — если имена в релизе поменяются.
+            import re
+            exes = [a for a in data.get("assets", []) if a["name"].endswith(".exe")]
+            strict = [a for a in exes
+                      if re.fullmatch(r"SteadyTranscribe-Setup-[\d.]+\.exe", a["name"])]
+            light = [a for a in exes if "with-model" not in a["name"].lower()]
+            pick = strict or light or exes
+            if not pick:
+                return   # нет установщика — не подсовывать страницу вместо файла
+            self.update_available.emit(
+                tag.lstrip("vV"), pick[0]["browser_download_url"],
+                _sha_from_body(data.get("body"), pick[0]["name"]))
+
+    def _check_mac(self):
+        import re
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO}/releases?per_page=30",
+            headers={"Accept": "application/vnd.github+json",
+                     "User-Agent": "SteadyVoice"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            releases = json.load(resp)
+        best, best_v = None, _parse_version(CURRENT_VERSION)
+        for rel in releases:
+            tag = rel.get("tag_name", "")
+            if rel.get("draft") or not re.fullmatch(_MAC_TAG_RE, tag):
+                continue
+            v = _parse_version(tag[4:])          # mac-v1.2.3 → 1.2.3
+            if v > best_v:
+                best, best_v = rel, v
+        if not best:
+            return
+        assets = best.get("assets", [])
+        strict = [a for a in assets if re.fullmatch(_MAC_ASSET_RE, a["name"])]
+        loose = [a for a in assets
+                 if a["name"].endswith(".zip") and "mac" in a["name"].lower()
+                 and "with-model" not in a["name"].lower()]
+        pick = strict or loose
+        if not pick:
+            return
+        self.update_available.emit(
+            best["tag_name"][4:].lstrip("vV"), pick[0]["browser_download_url"],
+            _sha_from_body(best.get("body"), pick[0]["name"]))
 
     def run(self):
         try:
-            req = urllib.request.Request(
-                f"https://api.github.com/repos/{REPO}/releases/latest",
-                headers={"Accept": "application/vnd.github+json",
-                         "User-Agent": "SteadyTranscribe"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.load(resp)
-            tag = data.get("tag_name", "")
-            if _parse_version(tag) > _parse_version(CURRENT_VERSION):
-                # ЗАДЕЛ НА БУДУЩЕЕ: сначала строгое каноничное имя лёгкого
-                # установщика (это имя — контракт, менять нельзя), затем
-                # мягкие запасные варианты — если имена в релизе поменяются.
-                import re
-                exes = [a for a in data.get("assets", []) if a["name"].endswith(".exe")]
-                strict = [a for a in exes
-                          if re.fullmatch(r"SteadyTranscribe-Setup-[\d.]+\.exe", a["name"])]
-                light = [a for a in exes if "with-model" not in a["name"].lower()]
-                pick = strict or light or exes
-                url = pick[0]["browser_download_url"] if pick else RELEASES_PAGE
-                m = re.search(r"sha256:\s*([0-9a-fA-F]{64})", data.get("body") or "")
-                sha = m.group(1).lower() if m else ""
-                self.update_available.emit(tag.lstrip("vV"), url, sha)
+            if _IS_MAC:
+                self._check_mac()
+            else:
+                self._check_windows()
         except Exception:  # noqa: BLE001
             pass
 
@@ -296,7 +485,9 @@ class InstallerDownloader(QThread):
         import logging
         import time as _time
         from ..storage import analytics
-        dest = os.path.join(_updates_dir(), "SteadyTranscribe-Update.exe")
+        dest = os.path.join(_updates_dir(),
+                            "SteadyVoice-Update.zip" if _IS_MAC
+                            else "SteadyTranscribe-Update.exe")
         last_err = None
         t0 = _time.monotonic()
         fails = 0
@@ -392,8 +583,12 @@ class UpdateDialog(QDialog):
             self.progress.setMaximum(0)
 
     def _on_done(self, installer_path: str):
-        self.status.setText("Установка обновления… Появится окно прогресса, "
-                            "после установки программа откроется сама.")
+        if _IS_MAC:
+            self.status.setText("Установка обновления… Программа закроется "
+                                "и через несколько секунд откроется обновлённой.")
+        else:
+            self.status.setText("Установка обновления… Появится окно прогресса, "
+                                "после установки программа откроется сама.")
         # запоминаем «на полке»: если установка сорвётся — повторная попытка
         # пройдёт уже без скачивания
         save_pending(self.version, installer_path)

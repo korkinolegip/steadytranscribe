@@ -17,14 +17,38 @@ class ConvertError(Exception):
     pass
 
 
-def ffmpeg_path() -> str:
-    """ffmpeg: вшитый в сборку или из PATH."""
+def _exe(name: str) -> str:
+    return name + ".exe" if sys.platform == "win32" else name
+
+
+def _find_tool(name: str) -> str:
+    """Ищет ffmpeg/ffprobe: вшитый в сборку → PATH → типовые пути Homebrew.
+    Важно для macOS: у GUI-приложения, запущенного из Finder, PATH не содержит
+    /opt/homebrew/bin — без явных кандидатов dev-сборка не нашла бы ffmpeg."""
     if getattr(sys, "frozen", False):
         from .resources import resource
-        bundled = resource("ffmpeg", "ffmpeg.exe")
+        bundled = resource("ffmpeg", _exe(name))
         if os.path.exists(bundled):
             return bundled
-    return "ffmpeg"
+    if sys.platform == "darwin":
+        import shutil
+        found = shutil.which(name)
+        if found:
+            return found
+        for cand in (f"/opt/homebrew/bin/{name}", f"/usr/local/bin/{name}"):
+            if os.path.exists(cand):
+                return cand
+    return name
+
+
+def ffmpeg_path() -> str:
+    """ffmpeg: вшитый в сборку или из PATH."""
+    return _find_tool("ffmpeg")
+
+
+def ffprobe_path() -> str:
+    """ffprobe рядом со вшитым ffmpeg (замена только ИМЕНИ файла — не папки)."""
+    return _find_tool("ffprobe")
 
 
 def is_supported(path: str) -> bool:
@@ -32,20 +56,36 @@ def is_supported(path: str) -> bool:
     return ext in SUPPORTED_EXTENSIONS
 
 
-def probe_duration(path: str) -> float:
-    """Длительность файла в секундах (0 при неудаче) — как fallback в оригинале."""
-    fp = ffmpeg_path()
-    exe = fp.replace("ffmpeg", "ffprobe") if "ffmpeg" in fp else "ffprobe"
+def _duration_via_ffmpeg(path: str) -> float:
+    """Запасной способ: строка «Duration: HH:MM:SS.xx» из stderr ffmpeg
+    (работает, даже если ffprobe не вшит в сборку)."""
     try:
         out = subprocess.run(
-            [exe, "-v", "quiet", "-show_entries", "format=duration",
+            [ffmpeg_path(), "-hide_banner", "-i", path],
+            capture_output=True, text=True, timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        import re
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", out.stderr or "")
+        if m:
+            return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def probe_duration(path: str) -> float:
+    """Длительность файла в секундах (0 при неудаче) — как fallback в оригинале."""
+    try:
+        out = subprocess.run(
+            [ffprobe_path(), "-v", "quiet", "-show_entries", "format=duration",
              "-of", "default=noprint_wrappers=1:nokey=1", path],
             capture_output=True, text=True, timeout=60,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return float(out.stdout.strip())
     except Exception:
-        return 0.0
+        return _duration_via_ffmpeg(path)
 
 
 def to_wav16k(path: str, cancel_check=None) -> str:

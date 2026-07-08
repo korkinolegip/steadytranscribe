@@ -53,14 +53,19 @@ class MainWindow(QMainWindow):
         app_icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
         if not app_icon.isNull():
             self.setWindowIcon(app_icon)
-        # системный трей — уведомление «файл готов», когда окно свёрнуто
-        from PySide6.QtWidgets import QSystemTrayIcon
-        try:
-            self.tray = QSystemTrayIcon(app_icon, self)
-            self.tray.setToolTip("SteadyVoice")
-            self.tray.show()
-        except Exception:  # noqa: BLE001
+        # системный трей — уведомление «файл готов», когда окно свёрнуто.
+        # На macOS иконку в menu bar не создаём (была бы мёртвым элементом) —
+        # уведомления идут через Центр уведомлений (см. ui/notify.py).
+        if sys.platform == "darwin":
             self.tray = None
+        else:
+            from PySide6.QtWidgets import QSystemTrayIcon
+            try:
+                self.tray = QSystemTrayIcon(app_icon, self)
+                self.tray.setToolTip("SteadyVoice")
+                self.tray.show()
+            except Exception:  # noqa: BLE001
+                self.tray = None
 
         transcriber = Transcriber()
         self.transcribe_page = TranscribePage(transcriber)
@@ -103,7 +108,9 @@ class MainWindow(QMainWindow):
                 item = QListWidgetItem(section)
                 item.setFlags(Qt.NoItemFlags)
                 font = item.font()
-                font.setPointSize(10)
+                # px, не pt: логический DPI Windows 96 vs macOS 72 — в пунктах
+                # заголовки секций на маке стали бы на четверть мельче
+                font.setPixelSize(13)
                 font.setBold(True)
                 item.setFont(font)
                 item.setForeground(Qt.gray)
@@ -156,6 +163,8 @@ class MainWindow(QMainWindow):
                     not self._start_hint.isVisible()))
             self.help_page.scrolled_to_bottom.connect(self._activate_start_hint)
 
+        self._init_session()
+
     def _activate_start_hint(self):
         """Гид дочитан до конца — показываем мигающий бейдж «начните здесь»."""
         if not self._start_hint:
@@ -171,18 +180,20 @@ class MainWindow(QMainWindow):
                 self._hint_blink.start()
                 break
 
-    def _dismiss_start_hint(self):
-        # getattr: _on_nav может сработать при старте раньше создания подсказки
-        if getattr(self, "_start_hint", None) is not None:
-            self._hint_blink.stop()
-            self._start_hint.hide()
-            self._start_hint.deleteLater()
-            self._start_hint = None
+    def _init_session(self):
+        """Единоразовая инициализация сеанса: обновления, таймеры, аналитика.
 
+        ВАЖНО: вызывается строго ОДИН раз из __init__. Раньше этот блок по ошибке
+        жил внутри _dismiss_start_hint и перезапускался при каждом переходе на
+        «Расшифровку»: дублировались события app_start, плодились таймеры,
+        сбрасывался счётчик длительности сеанса, а при первом запуске онбординг
+        не появлялся до клика по меню.
+        """
         # обновления по схеме Chrome: тихо скачать → отложить → применить
         # при простое / при выходе / при следующем запуске (см. updater.py).
         self._installing = False            # установка уже запущена (не дублировать)
         self._auto_downloader = None
+        self._startup_dialog_shown = False
         self._update_checker = self._start_update_flow(startup=True)
         # подтверждение после обновления: «программа обновлена до vX»
         self._notify_if_updated()
@@ -202,7 +213,6 @@ class MainWindow(QMainWindow):
         self._recheck_timer.timeout.connect(
             lambda: setattr(self, "_update_checker", self._start_update_flow()))
         self._recheck_timer.start()
-        self._startup_dialog_shown = False
         # мини-обучение и базовая модель при первом запуске
         QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
 
@@ -225,9 +235,21 @@ class MainWindow(QMainWindow):
         self._analytics_timer.timeout.connect(analytics.flush_async)
         self._analytics_timer.start()
 
+    def _dismiss_start_hint(self):
+        # getattr: _on_nav может сработать при старте раньше создания подсказки
+        if getattr(self, "_start_hint", None) is not None:
+            self._hint_blink.stop()
+            self._start_hint.hide()
+            self._start_hint.deleteLater()
+            self._start_hint = None
+
     def _start_update_flow(self, startup: bool = False):
         if os.environ.get("STEADY_UITEST"):
             return None   # фотосессия UI: без сети и модальных диалогов
+        if sys.platform == "darwin" and not updater.can_self_update():
+            # запуск из DMG/Загрузок (транслокация): установить обновление всё
+            # равно не получится — не жжём трафик бесконечной перекачкой zip
+            return None
         from ..storage import settings as settings_store
         checker = updater.UpdateChecker(self)
         auto = settings_store.load().get("auto_update", True)
@@ -256,6 +278,8 @@ class MainWindow(QMainWindow):
 
     def _notify_if_updated(self):
         """Первый запуск новой версии — подтверждаем: «обновлено до vX»."""
+        if os.environ.get("STEADY_UITEST"):
+            return   # фотосессия: не трогать last_version и не слать уведомление
         from ..storage import settings as settings_store
         s = settings_store.load()
         prev = s.get("last_version", "")
@@ -266,15 +290,14 @@ class MainWindow(QMainWindow):
         if prev:
             from ..storage import analytics
             analytics.track("updated", frm=prev, to=updater.CURRENT_VERSION)
-        if prev and self.tray is not None:   # prev пуст = самая первая установка
-            from PySide6.QtWidgets import QSystemTrayIcon
+        if prev:   # prev пуст = самая первая установка
+            from . import notify
             from .changelog import whats_new
             note = whats_new(updater.CURRENT_VERSION)
             body = f"Установлена версия {updater.CURRENT_VERSION}."
             if note:
                 body += f"\n✨ {note}"       # по-человечески, без технических деталей
-            self.tray.showMessage("Программа обновлена", body,
-                                  QSystemTrayIcon.Information, 7000)
+            notify.send(self.tray, "Программа обновлена", body, 7000)
 
     def _on_update_found(self, version: str, url: str, sha: str = ""):
         """Авто-режим: тихо скачиваем установщик в фоне, не мешая работе."""
@@ -291,12 +314,9 @@ class MainWindow(QMainWindow):
     def _on_installer_ready(self, version: str, installer_path: str):
         """Установщик скачан и отложен. Применится при простое/выходе/запуске."""
         updater.save_pending(version, installer_path)
-        if self.tray is not None:
-            from PySide6.QtWidgets import QSystemTrayIcon
-            self.tray.showMessage(
-                "Обновление готово",
-                f"Версия {version} загружена и установится сама — работе не помешает.",
-                QSystemTrayIcon.Information, 6000)
+        from . import notify
+        notify.send(self.tray, "Обновление готово",
+                    f"Версия {version} загружена и установится сама — работе не помешает.")
 
     def _busy(self) -> bool:
         if any(w and w.isRunning() for w in (self.transcribe_page.worker,
@@ -320,12 +340,10 @@ class MainWindow(QMainWindow):
         import logging
         logging.info("update: простой ≥10 мин — устанавливаю отложенное обновление")
         self._installing = True
-        if self.tray is not None:
-            from PySide6.QtWidgets import QSystemTrayIcon
-            self.tray.showMessage(
-                "Обновление SteadyVoice",
-                "Программа простаивает — устанавливаю обновление и вернусь через минуту.",
-                QSystemTrayIcon.Information, 5000)
+        from . import notify
+        notify.send(self.tray, "Обновление SteadyVoice",
+                    "Программа простаивает — устанавливаю обновление и вернусь через минуту.",
+                    5000)
         updater.mark_restart_minimized()
         if updater.install_pending(relaunch=True):
             from PySide6.QtWidgets import QApplication

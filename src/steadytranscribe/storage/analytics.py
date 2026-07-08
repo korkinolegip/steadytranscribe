@@ -71,8 +71,9 @@ _machine_cache = None
 
 
 def machine_id() -> str:
-    """Стабильный отпечаток КОМПЬЮТЕРА (хэш системного MachineGuid) — переживает
-    переустановку программы. Видно возвращение пользователя на том же ПК."""
+    """Стабильный отпечаток КОМПЬЮТЕРА (хэш системного идентификатора) — переживает
+    переустановку программы. Видно возвращение пользователя на том же ПК.
+    Windows — MachineGuid из реестра; macOS — IOPlatformUUID (постоянен для машины)."""
     global _machine_cache
     if _machine_cache:
         return _machine_cache
@@ -83,6 +84,18 @@ def machine_id() -> str:
                                  r"SOFTWARE\Microsoft\Cryptography", 0,
                                  winreg.KEY_READ | winreg.KEY_WOW64_64KEY)
             raw, _ = winreg.QueryValueEx(key, "MachineGuid")
+        elif sys.platform == "darwin":
+            import subprocess
+            out = subprocess.run(
+                ["/usr/sbin/ioreg", "-rd1", "-c", "IOPlatformExpertDevice"],
+                capture_output=True, text=True, timeout=10).stdout
+            raw = ""
+            for line in out.splitlines():
+                if "IOPlatformUUID" in line:
+                    raw = line.split('"')[-2]
+                    break
+            if not raw:
+                raw = str(uuid.getnode())
         else:
             raw = str(uuid.getnode())
         _machine_cache = hashlib.sha256(str(raw).encode()).hexdigest()[:12]
@@ -93,6 +106,8 @@ def machine_id() -> str:
 
 def track(event: str, **fields) -> None:
     """Записать событие. Никогда не роняет программу."""
+    if os.environ.get("STEADY_UITEST"):
+        return   # фотосессия UI: не засорять аналитику событиями с CI
     try:
         from ..ui.updater import CURRENT_VERSION
         s = _load_settings()
@@ -100,6 +115,8 @@ def track(event: str, **fields) -> None:
                "id": device_id(),
                "user": s.get("user_name", ""), "dept": s.get("user_dept", ""),
                "v": CURRENT_VERSION}
+        if sys.platform == "darwin":
+            rec["os"] = "mac"     # Windows-события без поля os (схема не менялась)
         rec.update(fields)
         line = json.dumps(rec, ensure_ascii=False)
         with _lock:
@@ -125,6 +142,8 @@ def _send(body: bytes, timeout: int) -> bool:
 
 def flush(timeout: int = 8) -> bool:
     """Отправить накопленную очередь одной пачкой. Успех → очередь очищается."""
+    if os.environ.get("STEADY_UITEST"):
+        return True   # фотосессия UI: без сети
     try:
         with _lock:
             try:
@@ -161,6 +180,7 @@ def send_startup_diagnostics() -> None:
         import ctypes
         import platform
         ram_gb = 0
+        cpu = platform.processor()[:80]
         if sys.platform == "win32":
             class _MEM(ctypes.Structure):
                 _fields_ = [("dwLength", ctypes.c_uint32),
@@ -176,7 +196,18 @@ def send_startup_diagnostics() -> None:
             st.dwLength = ctypes.sizeof(_MEM)
             if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
                 ram_gb = round(st.ullTotalPhys / (1024 ** 3))
-        track("sys", os=platform.platform(), cpu=platform.processor()[:80],
+        elif sys.platform == "darwin":
+            import subprocess
+            def _sysctl(name: str) -> str:
+                return subprocess.run(["/usr/sbin/sysctl", "-n", name],
+                                      capture_output=True, text=True,
+                                      timeout=10).stdout.strip()
+            try:
+                ram_gb = round(int(_sysctl("hw.memsize")) / (1024 ** 3))
+                cpu = _sysctl("machdep.cpu.brand_string")[:80]  # «Apple M4»
+            except Exception:  # noqa: BLE001
+                pass
+        track("sys", os=platform.platform(), cpu=cpu,
               cores=os.cpu_count(), ram_gb=ram_gb)
     except Exception:  # noqa: BLE001
         pass

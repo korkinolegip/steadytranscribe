@@ -5,13 +5,38 @@
 ОС автоматически убивает весь job вместе со всеми дочерними процессами.
 Ничего не остаётся висеть в системе, даже если приложение упало.
 
-На macOS/Linux — заглушки (там дочерние процессы завершаются штатной отменой).
+На macOS Job Object'ов нет — ведём реестр дочерних PID: kill_all() добивает их
+при закрытии, atexit-страховка срабатывает даже при необработанной ошибке.
 """
 import ctypes
 import sys
 
 _job = None
 _tried = False
+
+# --- macOS: реестр дочерних процессов ---
+_mac_pids: set = set()
+_mac_atexit_installed = False
+
+
+def _mac_register(pid: int) -> None:
+    global _mac_atexit_installed
+    _mac_pids.add(pid)
+    if not _mac_atexit_installed:
+        import atexit
+        atexit.register(_mac_kill_all)
+        _mac_atexit_installed = True
+
+
+def _mac_kill_all() -> None:
+    import os
+    import signal
+    for pid in list(_mac_pids):
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass  # уже завершился
+        _mac_pids.discard(pid)
 
 
 def _kernel32():
@@ -96,7 +121,12 @@ def _ensure_job():
 
 def assign(pid: int) -> None:
     """Привязать дочерний процесс к job — он умрёт вместе с приложением."""
-    if sys.platform != "win32" or not pid:
+    if not pid:
+        return
+    if sys.platform == "darwin":
+        _mac_register(pid)
+        return
+    if sys.platform != "win32":
         return
     job = _ensure_job()
     if not job:
@@ -114,6 +144,9 @@ def assign(pid: int) -> None:
 def kill_all() -> None:
     """Принудительно завершить все дочерние процессы прямо сейчас
     (страховка при закрытии — не ждём выхода из процесса)."""
+    if sys.platform == "darwin":
+        _mac_kill_all()
+        return
     if sys.platform != "win32" or _job is None:
         return
     try:

@@ -100,7 +100,10 @@ class DiarizationWorker(QThread):
             else:
                 cmd = [sys.executable, "-m", "steadytranscribe.app",
                        "--diarize", self._wav, str(self._num)]
-            env = dict(os.environ, PYTHONPATH="src")
+            # абсолютный путь к src: работает из любого cwd (раньше был
+            # относительный "src" — ломался при запуске не из корня репо)
+            src_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            env = dict(os.environ, PYTHONPATH=src_root)
             from . import priority as _prio
             # разделение — долгая фоновая операция, всегда пониженный приоритет
             flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | _prio.creationflag(True)
@@ -108,6 +111,10 @@ class DiarizationWorker(QThread):
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", env=env,
                 creationflags=flags)
+            if sys.platform == "darwin":
+                # на mac фоновый приоритет нельзя задать флагом запуска —
+                # понижаем сразу после старта (обратимо, см. priority.py)
+                _prio.set_pid_background(self._proc.pid, True)
             from . import jobkill
             jobkill.assign(self._proc.pid)   # умрёт вместе с приложением — без сирот
             turns_raw = None

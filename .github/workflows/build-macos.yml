@@ -1,0 +1,130 @@
+name: Build macOS App
+
+# Отдельный канал релизов для macOS:
+# - теги строго mac-vX.Y.Z (префиксные! v1.2.3-mac запустил бы Windows-сборку)
+# - релизы ВСЕГДА prerelease: иначе mac-релиз станет /releases/latest и
+#   Windows-клиенты перестанут видеть свои обновления (их updater смотрит latest)
+# - ассет-контракт (менять НЕЛЬЗЯ): SteadyVoice-mac-X.Y.Z.zip
+on:
+  push:
+    tags: ["mac-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon (arm64) — как у пользователей
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Контроль версий и контрактов автообновления (macOS)
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#mac-v}"
+          # BSD-grep без -P: версию достаём sed'ом
+          PY=$(sed -nE 's/^CURRENT_VERSION = "([0-9.]+)"$/\1/p' src/steadytranscribe/ui/updater.py)
+          echo "tag=$TAG updater=$PY"
+          [ -n "$TAG" ] && [ "$TAG" = "$PY" ] || {
+            echo "::error::Версия тега mac-v$TAG не совпадает с updater.py ($PY)"; exit 1; }
+          # контракты mac-канала (менять НЕЛЬЗЯ — сломаются обновления установленных копий)
+          grep -q 'bundle_identifier="com.steadycontrol.steadyvoice"' packaging/steadyvoice-mac.spec || {
+            echo "::error::Изменён bundle_identifier — сломает обновления"; exit 1; }
+          grep -q 'SteadyVoice-mac-\[' src/steadytranscribe/ui/updater.py || {
+            echo "::error::Изменён контракт имени mac-ассета в updater.py"; exit 1; }
+          echo "Контракты в порядке"
+
+      - name: Lint — критичные ошибки (дубликаты функций, неопределённые имена)
+        shell: bash
+        run: |
+          pip install pyflakes
+          python -m pyflakes src/steadytranscribe > flakes.txt || true
+          if grep -E "redefinition|undefined name" flakes.txt; then
+            echo "::error::Критичная ошибка линтера — сборка остановлена (см. выше)"
+            exit 1
+          fi
+          echo "Lint OK"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: ffmpeg (Homebrew; PyInstaller соберёт dylib-зависимости в бандл)
+        run: |
+          brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+          echo "STEADY_FFMPEG_DIR=$(brew --prefix)/bin" >> "$GITHUB_ENV"
+
+      - name: Build app (PyInstaller → SteadyVoice.app)
+        run: pyinstaller packaging/steadyvoice-mac.spec --distpath dist-mac --workpath build-mac
+
+      - name: Подпись (ad-hoc — без платного сертификата)
+        run: |
+          codesign --force --deep -s - dist-mac/SteadyVoice.app
+          codesign --verify --deep dist-mac/SteadyVoice.app && echo "подпись ок"
+
+      - name: Смоук-тест собранного приложения (--selftest)
+        shell: bash
+        run: |
+          # СТРОГО вшитый ffmpeg — никаких fallback на PATH: они маскировали бы
+          # сборку без ffmpeg (пользователи получили бы «ffmpeg не найден»)
+          FF=dist-mac/SteadyVoice.app/Contents/Frameworks/ffmpeg/ffmpeg
+          test -x "$FF" || { echo "::error::ffmpeg не попал в бандл"; exit 1; }
+          test -x dist-mac/SteadyVoice.app/Contents/Frameworks/ffmpeg/ffprobe || {
+            echo "::error::ffprobe не попал в бандл"; exit 1; }
+          # синус вместо речи: проверяем, что ffmpeg, ctranslate2 и sherpa-onnx
+          # внутри бандла запускаются и проходят полный конвейер
+          "$FF" -y -v error -f lavfi -i "sine=frequency=440:duration=3" -ar 16000 -ac 1 selftest.wav
+          dist-mac/SteadyVoice.app/Contents/MacOS/SteadyVoice --selftest selftest.wav
+      - name: Архив (контракт имени) + DMG
+        shell: bash
+        run: |
+          VERSION=$(sed -nE 's/^CURRENT_VERSION = "([0-9.]+)"$/\1/p' src/steadytranscribe/ui/updater.py)
+          # zip для автообновления — ditto сохраняет права/симлинки/подпись
+          ditto -c -k --keepParent dist-mac/SteadyVoice.app "SteadyVoice-mac-$VERSION.zip"
+          # DMG для первой установки: перетащить в «Программы»
+          mkdir -p dmg-root
+          ditto dist-mac/SteadyVoice.app dmg-root/SteadyVoice.app
+          ln -s /Applications dmg-root/Applications
+          hdiutil create -volname "SteadyVoice" -srcfolder dmg-root -ov -format UDZO \
+            "SteadyVoice-$VERSION.dmg"
+          ls -la SteadyVoice-*
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: SteadyVoice-mac
+          path: |
+            SteadyVoice-mac-*.zip
+            SteadyVoice-*.dmg
+
+      # ВАЖНО: prerelease: true — mac-релиз не должен становиться /releases/latest
+      - name: Attach to release (prerelease!)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: true
+          files: |
+            SteadyVoice-mac-*.zip
+            SteadyVoice-*.dmg
+
+      # SHA256 в описание релиза — пофайловый формат «sha256 <имя>: <hex>»
+      # (программа сверяет файл, скачанный через зеркала gh-proxy)
+      - name: SHA256 в описание релиза
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes=""
+          for f in SteadyVoice-mac-*.zip SteadyVoice-*.dmg; do
+            h=$(shasum -a 256 "$f" | cut -d' ' -f1)
+            notes="$notes"$'\n'"sha256 $f: $h"
+          done
+          gh release edit "${GITHUB_REF_NAME}" --prerelease --notes "Сборка для macOS (Apple Silicon).$notes"
+          echo "$notes"

@@ -6,6 +6,7 @@ UX: файл → чистый текст. На готовом результат
 import json
 import os
 import re
+import sys
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -565,12 +566,9 @@ class TranscribePage(QWidget):
         win = self.window()
         if win and win.isActiveWindow():
             return
-        tray = getattr(win, "tray", None)
-        if tray is not None:
-            from PySide6.QtWidgets import QSystemTrayIcon
-            tray.showMessage("Расшифровка готова",
-                             f"Файл «{name}» распознан — можно открыть и посмотреть.",
-                             QSystemTrayIcon.Information, 5000)
+        from .. import notify
+        notify.send(getattr(win, "tray", None), "Расшифровка готова",
+                    f"Файл «{name}» распознан — можно открыть и посмотреть.", 5000)
 
     # ---------- диаризация по кнопке ----------
 
@@ -762,7 +760,14 @@ def export_transcription(parent, file_name: str, text: str, duration: float,
         "Текст (*.txt);;JSON (*.json)")
     if not path:
         return
-    if path.endswith(".json") or "json" in chosen.lower():
+    as_json = path.endswith(".json") or "json" in chosen.lower()
+    # ТОЛЬКО macOS: NSSavePanel не подменяет расширение при выборе фильтра
+    # JSON — нормализуем сами, иначе получится «имя.txt» с JSON внутри.
+    # На Windows диалог делает это сам; трогать путь после подтверждения
+    # нельзя (обошли бы предупреждение о перезаписи).
+    if sys.platform == "darwin" and as_json and not path.endswith(".json"):
+        path = os.path.splitext(path)[0] + ".json"
+    if as_json:
         payload = {"confidence": confidence, "duration": duration,
                    "fileName": file_name, "processingTime": processing,
                    "text": text, "timestamp": timestamp.isoformat()}

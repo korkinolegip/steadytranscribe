@@ -1,8 +1,12 @@
 """Управление приоритетом процесса — чтобы расшифровка не мешала работе пользователя.
 
 Понижение приоритета отдаёт процессор активным программам пользователя:
-Windows сама решает, кому сейчас нужнее CPU. Расшифровка использует «свободные»
+ОС сама решает, кому сейчас нужнее CPU. Расшифровка использует «свободные»
 циклы — компьютер остаётся отзывчивым, можно спокойно работать параллельно.
+
+Windows — SetPriorityClass; macOS — taskpolicy -b/-B (фоновый QoS: планировщик
+уводит процесс на энергоэффективные ядра и обратно). os.nice() на macOS не
+подходит: сдвиг относительный и обратно поднять приоритет без прав нельзя.
 """
 import sys
 
@@ -12,14 +16,22 @@ _NORMAL = 0x00000020
 _IDLE = 0x00000040
 
 
+def _mac_taskpolicy(pid: int, background: bool) -> None:
+    import subprocess
+    subprocess.run(["/usr/sbin/taskpolicy", "-b" if background else "-B",
+                    "-p", str(pid)], capture_output=True, timeout=5)
+
+
 def set_background(on: bool) -> None:
     """on=True — понизить приоритет (фоновый режим); False — вернуть обычный."""
-    if sys.platform != "win32":
+    if sys.platform == "darwin":
         try:
             import os
-            os.nice(10 if on else 0)  # noqa: сдвиг приоритета на *nix
+            _mac_taskpolicy(os.getpid(), on)
         except Exception:  # noqa: BLE001
             pass
+        return
+    if sys.platform != "win32":
         return
     try:
         import ctypes
@@ -43,7 +55,15 @@ def set_pid_background(pid: int, on: bool) -> None:
     обычный приоритет (быстрее); ушёл работать в другое приложение →
     пониженный (уступаем ресурсы). Без этого разделение всегда сидело
     на пониженном приоритете и казалось непомерно долгим."""
-    if sys.platform != "win32" or not pid:
+    if not pid:
+        return
+    if sys.platform == "darwin":
+        try:
+            _mac_taskpolicy(pid, on)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    if sys.platform != "win32":
         return
     try:
         import ctypes

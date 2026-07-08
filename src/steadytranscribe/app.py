@@ -10,10 +10,15 @@ os.environ.setdefault("CT2_USE_MKL", "0")
 
 
 def _detect_cpu() -> str:
-    """Определяет ускорение процессора через системный вызов Windows
-    (без подпроцессов!). Мощный CPU (AVX2) → быстрый режим; иначе → совместимый.
+    """Определяет ускорение процессора (без подпроцессов!).
+    Windows — системный вызов IsProcessorFeaturePresent (AVX2/AVX);
+    macOS Apple Silicon — всегда быстрый NEON-режим, ISA не форсируем.
     ВАЖНО: не использовать py-cpuinfo — в собранном exe он рекурсивно
     запускает копии приложения (плодятся окна)."""
+    if sys.platform == "darwin":
+        # Apple Silicon (и Intel-маки): ctranslate2 сам выбирает лучший бэкенд.
+        # Форсировать GENERIC нельзя — потеряем NEON/Accelerate и скорость.
+        return "apple"
     try:
         import ctypes
         if sys.platform == "win32":
@@ -31,6 +36,16 @@ def _detect_cpu() -> str:
 
 
 CPU_MODE = _detect_cpu()
+
+# macOS: python.org-сборка Python и frozen-приложение не видят системные
+# корневые сертификаты — все HTTPS-запросы urllib (модели, обновления,
+# аналитика) падали бы с CERTIFICATE_VERIFY_FAILED. Подставляем пакет certifi.
+if sys.platform == "darwin" and not os.environ.get("SSL_CERT_FILE"):
+    try:
+        import certifi
+        os.environ["SSL_CERT_FILE"] = certifi.where()
+    except Exception:  # noqa: BLE001
+        pass
 
 from .storage.settings import app_data_dir
 
@@ -165,6 +180,13 @@ def main():
 
     from .ui.theme import QSS
     app.setStyleSheet(QSS)
+    if sys.platform == "darwin":
+        # тёмная рамка окна под тёмную тему (иначе титлбар останется белым)
+        try:
+            from PySide6.QtCore import Qt as _Qt
+            app.styleHints().setColorScheme(_Qt.ColorScheme.Dark)
+        except Exception:  # noqa: BLE001
+            pass
 
     def excepthook(exc_type, exc_value, exc_tb):
         text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
@@ -186,18 +208,27 @@ def main():
             feedback.send_report(extra=f"Ручная отправка: {exc_value}")
     sys.excepthook = excepthook
 
+    # macOS: запуск из DMG/Загрузок → предлагаем перенести в «Программы».
+    # Без этого автообновление невозможно (карантинная «транслокация» делает
+    # путь приложения случайным и только для чтения).
+    if sys.platform == "darwin" and not os.environ.get("STEADY_UITEST"):
+        try:
+            from .ui import macinstall
+            if macinstall.offer_move_to_applications():
+                sys.exit(0)   # скопировано и перезапущено из «Программ»
+        except Exception:  # noqa: BLE001
+            logging.exception("перенос в «Программы» не удался")
+
     from .ui.main_window import MainWindow
     window = MainWindow()
     # после обновления на простое возвращаемся СВЁРНУТЫМИ — не крадём фокус
+    from .ui import notify as _notify
     from .ui import updater as _upd
     if _upd.consume_restart_marker():
         window.showMinimized()
-        if getattr(window, "tray", None):
-            from PySide6.QtWidgets import QSystemTrayIcon
-            window.tray.showMessage(
-                "Программа обновлена",
-                f"Установлена версия {_upd.CURRENT_VERSION}. Всё готово к работе.",
-                QSystemTrayIcon.Information, 5000)
+        _notify.send(getattr(window, "tray", None), "Программа обновлена",
+                     f"Установлена версия {_upd.CURRENT_VERSION}. Всё готово к работе.",
+                     5000)
     else:
         window.show()
     sys.exit(app.exec())

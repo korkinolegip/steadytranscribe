@@ -13,6 +13,7 @@ import json
 import math
 import os
 import random
+import sys
 
 from PySide6.QtCore import QByteArray, QRectF, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
@@ -28,6 +29,16 @@ from ..storage.settings import app_data_dir
 
 ACCENT = QColor("#3AC8C6")
 ACCENT_DIM = QColor(58, 200, 198, 60)
+
+def _font_pt(font, pt: float) -> None:
+    """Размер шрифта «как на Windows». Логический DPI: Windows 96, macOS 72 —
+    те же пункты на маке дали бы шрифт на четверть мельче, поэтому на mac
+    задаём эквивалент в пикселях. На Windows поведение не меняется."""
+    if sys.platform == "darwin":
+        font.setPixelSize(max(int(round(pt * 96 / 72)), 8))
+    else:
+        font.setPointSizeF(pt)
+
 GROUND = QColor("#2A2A2A")
 CLOUD = QColor(255, 255, 255, 14)
 TEXT_DIM = QColor("#9A9A9A")
@@ -308,14 +319,14 @@ class MiniGame(QWidget):
                 r.render(p, rect)
             else:
                 f = QFont()
-                f.setPointSize(max(int(s * 0.55), 11))
+                _font_pt(f, max(int(s * 0.55), 11))
                 p.setFont(f)
                 p.drawText(rect, Qt.AlignCenter, _EMOJI_FALLBACK[kind])
 
         # счёт — справа сверху; подсказки — в отдельной зоне под землёй
         p.setPen(TEXT_DIM)
         sf = QFont()
-        sf.setPointSize(10)
+        _font_pt(sf, 10)
         p.setFont(sf)
         p.drawText(QRectF(0, 6, w - 14, 16), Qt.AlignRight,
                    f"очки {self._score}   рекорд {self._high}")
@@ -334,7 +345,7 @@ class MiniGame(QWidget):
         if hint:
             p.setPen(color)
             hf = QFont()
-            hf.setPointSize(10)
+            _font_pt(hf, 10)
             p.setFont(hf)
             p.drawText(QRectF(0, _GROUND_Y + 10, w, _H - _GROUND_Y - 12),
                        Qt.AlignHCenter | Qt.AlignVCenter, hint)
@@ -356,14 +367,14 @@ class MiniGame(QWidget):
         p.setBrush(Qt.NoBrush)
         # тексты
         tf = QFont()
-        tf.setPointSize(12)
+        _font_pt(tf, 12)
         tf.setBold(True)
         p.setFont(tf)
         p.setPen(ACCENT)
         p.drawText(QRectF(58, 8, w - 70, 22), Qt.AlignLeft | Qt.AlignVCenter,
                    "🎮 Мини-игра на время ожидания")
         sf = QFont()
-        sf.setPointSize(10)
+        _font_pt(sf, 10)
         p.setFont(sf)
         p.setPen(TEXT_DIM)
         rec = f"  ·  ваш рекорд: {self._high}" if self._high else ""
@@ -393,7 +404,7 @@ class MiniGame(QWidget):
             k = s * 0.26
             p.drawLine(x + k, y + k, x + s - k, y + s - k)   # диагональ «запрещено»
             f = QFont()
-            f.setPointSizeF(max(s * 0.22, 7.0))
+            _font_pt(f, max(s * 0.22, 7.0))
             f.setBold(True)
             p.setFont(f)
             p.setPen(red)
@@ -406,7 +417,7 @@ class MiniGame(QWidget):
                    (0.05, 0.55), (0.05, 0.18)]
             p.drawPolygon(QPolygonF([QPointF(x + a * s, y + b * s) for a, b in pts]))
             f = QFont()
-            f.setPointSizeF(max(s * 0.26, 8.0))
+            _font_pt(f, max(s * 0.26, 8.0))
             f.setBold(True)
             p.setFont(f)
             p.setPen(QColor("#FFFFFF"))
@@ -478,7 +489,7 @@ class MiniGame(QWidget):
         back = 1 + c3 * (t1 - 1) ** 3 + c1 * (t1 - 1) ** 2
         p.setOpacity(min(t1 * 1.6, 1.0) * fade_out)
         f = QFont()
-        f.setPointSizeF(max(6.0, 28 * back))
+        _font_pt(f, max(6.0, 28 * back))
         f.setBold(True)
         p.setFont(f)
         p.setPen(ACCENT)
@@ -489,14 +500,14 @@ class MiniGame(QWidget):
         rise = (1 - t2) ** 2 * 20
         p.setOpacity(t2 * fade_out)
         sf = QFont()
-        sf.setPointSize(15)
+        _font_pt(sf, 15)
         sf.setBold(True)
         p.setFont(sf)
         p.setPen(QColor("#ECECEC"))
         p.drawText(QRectF(0, 72 + rise, w, 30), Qt.AlignCenter, self._finish_text)
         p.setOpacity(t2 * 0.8 * fade_out)
         mf = QFont()
-        mf.setPointSize(10)
+        _font_pt(mf, 10)
         p.setFont(mf)
         p.setPen(TEXT_DIM)
         p.drawText(QRectF(0, 104 + rise, w, 20), Qt.AlignHCenter,
