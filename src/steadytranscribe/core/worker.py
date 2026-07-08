@@ -58,7 +58,7 @@ class TranscriptionWorker(QThread):
 class DiarizationWorker(QThread):
     """Готовый результат + WAV → текст-диалог по собеседникам."""
     progress = Signal(str, float)
-    finished_ok = Signal(str)              # текст-диалог
+    finished_ok = Signal(str, dict)        # текст-диалог, {говорящий: (start, end)}
     failed = Signal(str)
 
     def __init__(self, wav_path: str, words: list, num_speakers: int, parent=None):
@@ -134,6 +134,8 @@ class DiarizationWorker(QThread):
             dialogue = diarize.build_dialogue(self._words, turns)
             if not dialogue.strip():
                 raise RuntimeError("Не удалось разделить запись на собеседников.")
-            self.finished_ok.emit(dialogue)
+            # интервалы образцовых фрагментов — для кнопки «прослушать голос»
+            fragments = diarize.speaker_fragments(self._words, turns)
+            self.finished_ok.emit(dialogue, fragments)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Ошибка разделения: {e}")

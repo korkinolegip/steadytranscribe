@@ -123,12 +123,21 @@ class SpeakerNamesDialog(QDialog):
 
     Уже названные показываются в поле как есть — опечатку можно поправить
     (раньше после первого переименования диалог больше не открывался:
-    искали только «Собеседник N», а их в тексте уже не было)."""
+    искали только «Собеседник N», а их в тексте уже не было).
+    У каждого голоса — кнопка ▶ «прослушать», чтобы понять, кто это (как в Plaud)."""
 
-    def __init__(self, speakers: list[str], parent=None):
+    def __init__(self, speakers: list[str], clips: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Имена собеседников")
+        self._clips = clips or {}
+        self._player = None
+        self._playing_btn = None
         lay = QVBoxLayout(self)
+        if self._clips:
+            hint = QLabel("Нажмите ▶ у голоса, чтобы его прослушать и понять, кто это.")
+            hint.setObjectName("hint")
+            hint.setWordWrap(True)
+            lay.addWidget(hint)
         form = QFormLayout()
         self.edits: dict[str, QLineEdit] = {}
         for sp in speakers:
@@ -137,8 +146,19 @@ class SpeakerNamesDialog(QDialog):
                 edit.setPlaceholderText("Например: Ирина")
             else:
                 edit.setText(sp)          # уже назван — правим существующее имя
-            form.addRow(f"{sp}:", edit)
             self.edits[sp] = edit
+            clip = self._clips.get(sp)
+            if clip is not None:
+                row = QHBoxLayout()
+                play = QPushButton("▶")
+                play.setFixedWidth(36)
+                play.setToolTip("Прослушать голос")
+                play.clicked.connect(lambda _=False, s=sp, b=play: self._toggle_play(s, b))
+                row.addWidget(edit, stretch=1)
+                row.addWidget(play)
+                form.addRow(f"{sp}:", row)
+            else:
+                form.addRow(f"{sp}:", edit)
         lay.addLayout(form)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Ok).setText("Применить")
@@ -146,6 +166,31 @@ class SpeakerNamesDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+
+    def _toggle_play(self, sp: str, btn: QPushButton):
+        from .. import clipplayer
+        if self._player is None:
+            self._player = clipplayer.ClipPlayer()
+        # повторный клик по играющей кнопке — стоп
+        if self._playing_btn is btn and self._player.is_playing():
+            self._player.stop()
+            self._reset_btn()
+            return
+        self._reset_btn()
+        pcm, sr = self._clips[sp]
+        self._playing_btn = btn
+        btn.setText("⏹")
+        self._player.play(pcm, sr, on_stop=self._reset_btn)
+
+    def _reset_btn(self):
+        if self._playing_btn is not None:
+            self._playing_btn.setText("▶")
+            self._playing_btn = None
+
+    def done(self, r):
+        if self._player is not None:
+            self._player.stop()
+        super().done(r)
 
     def mapping(self) -> dict[str, str]:
         return {sp: e.text().strip() for sp, e in self.edits.items()
@@ -651,7 +696,7 @@ class TranscribePage(QWidget):
         self.progress_card.show()
         self.game.begin()          # таймкиллер и на время разделения
 
-    def _on_diarized(self, dialogue: str):
+    def _on_diarized(self, dialogue: str, fragments: dict):
         self.diar_worker = None
         self._elapsed.stop()
         self.time_label.setText("")
@@ -664,6 +709,17 @@ class TranscribePage(QWidget):
             analytics.track("diarize", audio_sec=int(self.result.duration or 0),
                             proc_sec=int(elapsed),
                             speakers=getattr(self, "_diar_speakers", 0))
+        # вырезаем образцовый фрагмент каждого голоса, пока WAV ещё на месте —
+        # чтобы «прослушать голос» работало и после авто-очистки файла
+        self._voice_clips: dict[str, tuple] = {}
+        if self.wav_path and os.path.exists(self.wav_path):
+            from .. import clipplayer
+            for spk, (st, en) in fragments.items():
+                try:
+                    pcm, sr = clipplayer.extract_pcm(self.wav_path, st, en)
+                    self._voice_clips[f"Собеседник {spk + 1}"] = (pcm, sr)
+                except Exception:  # noqa: BLE001
+                    pass
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
@@ -695,7 +751,8 @@ class TranscribePage(QWidget):
                 speakers.append(m.group(1))
         if not speakers:
             return
-        dlg = SpeakerNamesDialog(speakers, self)
+        clips = getattr(self, "_voice_clips", {})
+        dlg = SpeakerNamesDialog(speakers, {s: clips[s] for s in speakers if s in clips}, self)
         if dlg.exec():
             from ...storage import analytics
             analytics.track("rename_speakers")
@@ -703,6 +760,9 @@ class TranscribePage(QWidget):
                 # замена только в НАЧАЛЕ реплики — тексты реплик не трогаем
                 self.dialogue_text = re.sub(
                     rf"^{re.escape(sp)}:", f"{name}:", self.dialogue_text, flags=re.M)
+                # клип «переезжает» на новое имя — прослушивание работает и потом
+                if sp in clips:
+                    clips[name] = clips.pop(sp)
             self._set_text(self.dialogue_text)
 
     # ---------- копирование/экспорт/сохранение ----------

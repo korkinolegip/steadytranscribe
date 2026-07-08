@@ -279,3 +279,38 @@ def build_dialogue(words: list[Word], turns: list[SpeakerTurn]) -> str:
     if buf:
         lines.append(f"Собеседник {current + 1}: " + "".join(buf).strip())
     return "\n\n".join(lines)
+
+
+def speaker_fragments(words: list[Word], turns: list[SpeakerTurn],
+                      max_len: float = 7.0, pad: float = 0.15) -> dict:
+    """Для каждого говорящего — интервал (start, end) образцового фрагмента,
+    чтобы его можно было прослушать при выборе имени (как в Plaud).
+
+    Берём самый длинный НЕПРЕРЫВНЫЙ сольный прогон слов говорящего (чтобы не
+    поймать «угу»), центрируем и обрезаем до max_len секунд. Ключ словаря —
+    0-based индекс говорящего (как в build_dialogue, +1 при показе)."""
+    if not words:
+        return {}
+    assigned = _fix_boundaries(
+        [_speaker_at((w.start + w.end) / 2, turns) for w in words], words)
+    # непрерывные группы одного говорящего
+    best: dict = {}   # speaker -> (длительность, start, end)
+    i, n = 0, len(words)
+    while i < n:
+        j = i
+        while j + 1 < n and assigned[j + 1] == assigned[i]:
+            j += 1
+        spk = assigned[i]
+        st, en = words[i].start, words[j].end
+        dur = en - st
+        if dur >= 1.5 and (j - i + 1) >= 3:   # не «угу», хотя бы 3 слова
+            if spk not in best or dur > best[spk][0]:
+                best[spk] = (dur, st, en)
+        i = j + 1
+    out: dict = {}
+    for spk, (dur, st, en) in best.items():
+        if dur > max_len:                     # обрезаем по центру
+            mid = (st + en) / 2
+            st, en = mid - max_len / 2, mid + max_len / 2
+        out[spk] = (max(st - pad, 0.0), en + pad)
+    return out
