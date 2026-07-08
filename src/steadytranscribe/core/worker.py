@@ -58,7 +58,8 @@ class TranscriptionWorker(QThread):
 class DiarizationWorker(QThread):
     """Готовый результат + WAV → текст-диалог по собеседникам."""
     progress = Signal(str, float)
-    finished_ok = Signal(str, dict)        # текст-диалог, {говорящий: (start, end)}
+    # текст-диалог, {«Собеседник N»: (start, end)}, {«Собеседник N»: вектор-центроид}
+    finished_ok = Signal(str, dict, dict)
     failed = Signal(str)
 
     def __init__(self, wav_path: str, words: list, num_speakers: int, parent=None):
@@ -114,6 +115,7 @@ class DiarizationWorker(QThread):
             from . import jobkill
             jobkill.assign(self._proc.pid)   # умрёт вместе с приложением — без сирот
             turns_raw = None
+            embed_raw = {}
             for line in self._proc.stdout:
                 if self._cancelled:
                     self._kill_proc()
@@ -124,6 +126,8 @@ class DiarizationWorker(QThread):
                     self.progress.emit("Определение собеседников…", float(line[9:]))
                 elif line.startswith("RESULT "):
                     turns_raw = json.loads(line[7:])
+                elif line.startswith("EMBED "):
+                    embed_raw = json.loads(line[6:])
             self._proc.wait()
             if self._cancelled:
                 self.failed.emit("Отменено пользователем.")
@@ -136,6 +140,8 @@ class DiarizationWorker(QThread):
                 raise RuntimeError("Не удалось разделить запись на собеседников.")
             # интервалы образцовых фрагментов — для кнопки «прослушать голос»
             fragments = diarize.speaker_fragments(self._words, turns)
-            self.finished_ok.emit(dialogue, fragments)
+            # центроиды по подписи «Собеседник N» — для запоминания/узнавания
+            voices = {f"Собеседник {int(k) + 1}": v for k, v in embed_raw.items()}
+            self.finished_ok.emit(dialogue, fragments, voices)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Ошибка разделения: {e}")

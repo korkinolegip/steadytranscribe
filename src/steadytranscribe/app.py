@@ -83,7 +83,7 @@ def _selftest(audio_path: str) -> int:
     # проверяем и диаризацию (у неё свои onnx-модели)
     from .core import diarize
     if diarize.is_available():
-        turns = diarize.diarize(wav, 2, status_cb=lambda s, p: None, cancel_check=lambda: False)
+        turns, _cent = diarize.diarize(wav, 2, status_cb=lambda s, p: None, cancel_check=lambda: False)
         print(f"SELFTEST: diarize DONE turns={len(turns)}", flush=True)
     else:
         print("SELFTEST: diarize models missing", flush=True)
@@ -101,12 +101,14 @@ def _run_diarize(wav_path: str, num_speakers: int) -> int:
         diag_log.info("diarize start: %s speakers=%s", wav_path, num_speakers)
         import json
         from .core import diarize
-        turns = diarize.diarize(
+        turns, centroids = diarize.diarize(
             wav_path, num_speakers,
             status_cb=lambda s, p: print(f"PROGRESS {p:.3f}", flush=True),
             cancel_check=lambda: False)
-        diag_log.info("diarize done: turns=%s", len(turns))
+        diag_log.info("diarize done: turns=%s голосов=%s", len(turns), len(centroids))
         print("RESULT " + json.dumps([[t.speaker, t.start, t.end] for t in turns]), flush=True)
+        # центроиды голосов — для запоминания/узнавания собеседников
+        print("EMBED " + json.dumps({str(k): v for k, v in centroids.items()}), flush=True)
         return 0
     except Exception as e:  # noqa: BLE001
         diag_log.exception("diarize FAILED: %s", e)

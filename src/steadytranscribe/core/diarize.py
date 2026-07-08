@@ -122,7 +122,7 @@ def diarize(wav_path: str, num_speakers: int, status_cb, cancel_check) -> list[S
     if cancel_check():
         raise InterruptedError("Отменено пользователем.")
     if not segs:
-        return []
+        return [], {}
 
     # --- этап 2: отпечатки голоса окон 1.5 с внутри речи ---
     extractor = sherpa_onnx.SpeakerEmbeddingExtractor(
@@ -139,7 +139,7 @@ def diarize(wav_path: str, num_speakers: int, status_cb, cancel_check) -> list[S
                 break
             t += _HOP
     if not wins:
-        return [SpeakerTurn(0, s.start, s.end) for s in segs]
+        return [SpeakerTurn(0, s.start, s.end) for s in segs], {}
     embs = []
     for i, (t0, t1) in enumerate(wins):
         if cancel_check():
@@ -182,6 +182,16 @@ def diarize(wav_path: str, num_speakers: int, status_cb, cancel_check) -> list[S
         vals, cnt = np.unique(lab_sorted[lo:hi], return_counts=True)
         smoothed[i] = vals[np.argmax(cnt)]
 
+    # центроид каждого голоса (для запоминания/узнавания между записями):
+    # среднее нормированных эмбеддингов его окон, снова L2-нормируем
+    centroids: dict = {}
+    for spk in set(int(x) for x in smoothed):
+        idx = [order[p] for p in range(len(order)) if int(smoothed[p]) == spk]
+        if idx:
+            c = X[idx].mean(axis=0)
+            c = c / (np.linalg.norm(c) + 1e-9)
+            centroids[spk] = [round(float(x), 6) for x in c]
+
     # окна (с перекрытием) → непрерывные реплики: граница — середина перекрытия
     turns: list[SpeakerTurn] = []
     for pos in range(len(order)):
@@ -196,7 +206,7 @@ def diarize(wav_path: str, num_speakers: int, status_cb, cancel_check) -> list[S
             turns.append(SpeakerTurn(spk, mid, en))
         else:
             turns.append(SpeakerTurn(spk, st, en))
-    return turns
+    return turns, centroids
 
 
 def _speaker_at(t: float, turns: list[SpeakerTurn]) -> int:

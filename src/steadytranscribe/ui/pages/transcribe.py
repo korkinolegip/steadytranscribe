@@ -126,10 +126,12 @@ class SpeakerNamesDialog(QDialog):
     искали только «Собеседник N», а их в тексте уже не было).
     У каждого голоса — кнопка ▶ «прослушать», чтобы понять, кто это (как в Plaud)."""
 
-    def __init__(self, speakers: list[str], clips: dict | None = None, parent=None):
+    def __init__(self, speakers: list[str], clips: dict | None = None, parent=None,
+                 prefill: dict | None = None):
         super().__init__(parent)
         self.setWindowTitle("Имена собеседников")
         self._clips = clips or {}
+        prefill = prefill or {}
         self._player = None
         self._playing_btn = None
         lay = QVBoxLayout(self)
@@ -142,7 +144,11 @@ class SpeakerNamesDialog(QDialog):
         self.edits: dict[str, QLineEdit] = {}
         for sp in speakers:
             edit = QLineEdit()
-            if re.fullmatch(r"Собеседник \d+", sp):
+            if sp in prefill:
+                # узнан предположительно — подставляем имя, пользователь подтвердит
+                edit.setText(prefill[sp])
+                edit.setPlaceholderText(f"похоже на {prefill[sp]}")
+            elif re.fullmatch(r"Собеседник \d+", sp):
                 edit.setPlaceholderText("Например: Ирина")
             else:
                 edit.setText(sp)          # уже назван — правим существующее имя
@@ -696,7 +702,7 @@ class TranscribePage(QWidget):
         self.progress_card.show()
         self.game.begin()          # таймкиллер и на время разделения
 
-    def _on_diarized(self, dialogue: str, fragments: dict):
+    def _on_diarized(self, dialogue: str, fragments: dict, voices: dict):
         self.diar_worker = None
         self._elapsed.stop()
         self.time_label.setText("")
@@ -720,6 +726,22 @@ class TranscribePage(QWidget):
                     self._voice_clips[f"Собеседник {spk + 1}"] = (pcm, sr)
                 except Exception:  # noqa: BLE001
                     pass
+        # центроиды голосов — для запоминания и узнавания между записями
+        self._voice_centroids: dict[str, list] = dict(voices)
+        # УЗНАВАНИЕ: если голос совпал с сохранённым — подставляем имя сразу
+        try:
+            from ...storage import voices as voices_store
+            self._voice_guesses = voices_store.identify(voices)   # {ключ: {name,score,confident}}
+        except Exception:  # noqa: BLE001
+            self._voice_guesses = {}
+        for key, g in self._voice_guesses.items():
+            if g.get("confident"):
+                dialogue = re.sub(rf"^{re.escape(key)}:", f"{g['name']}:",
+                                  dialogue, flags=re.M)
+                # клип и центроид «переезжают» на узнанное имя
+                for store in (self._voice_clips, self._voice_centroids):
+                    if key in store:
+                        store[g["name"]] = store.pop(key)
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
@@ -752,17 +774,28 @@ class TranscribePage(QWidget):
         if not speakers:
             return
         clips = getattr(self, "_voice_clips", {})
-        dlg = SpeakerNamesDialog(speakers, {s: clips[s] for s in speakers if s in clips}, self)
+        centroids = getattr(self, "_voice_centroids", {})
+        guesses = getattr(self, "_voice_guesses", {})
+        # подсказки-гипотезы «похоже на X» (0.50–0.70) — предзаполнить в диалоге
+        prefill = {k: g["name"] for k, g in guesses.items()
+                   if not g.get("confident") and k in speakers}
+        dlg = SpeakerNamesDialog(speakers, {s: clips[s] for s in speakers if s in clips},
+                                 self, prefill=prefill)
         if dlg.exec():
             from ...storage import analytics
+            from ...storage import voices as voices_store
             analytics.track("rename_speakers")
             for sp, name in dlg.mapping().items():
                 # замена только в НАЧАЛЕ реплики — тексты реплик не трогаем
                 self.dialogue_text = re.sub(
                     rf"^{re.escape(sp)}:", f"{name}:", self.dialogue_text, flags=re.M)
-                # клип «переезжает» на новое имя — прослушивание работает и потом
-                if sp in clips:
-                    clips[name] = clips.pop(sp)
+                # ЗАПОМИНАЕМ голос под этим именем — узнаем в следующих записях
+                if sp in centroids:
+                    voices_store.enroll(name, centroids[sp])
+                # клип и центроид «переезжают» на новое имя
+                for store in (clips, centroids):
+                    if sp in store:
+                        store[name] = store.pop(sp)
             self._set_text(self.dialogue_text)
 
     # ---------- копирование/экспорт/сохранение ----------
