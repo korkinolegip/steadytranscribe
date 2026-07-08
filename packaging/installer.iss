@@ -3,7 +3,7 @@
 ; установки, имя exe, имя файла установщика) зафиксированы и НЕ меняются —
 ; иначе сломаются автообновления у установленных копий.
 #define AppName "SteadyVoice"
-#define AppVersion "1.5.14"
+#define AppVersion "1.5.15"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 
@@ -53,13 +53,15 @@ Type: filesandordirs; Name: "{autoprograms}\SteadyTranscribe"
 
 [Files]
 Source: "..\dist\SteadyTranscribe\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+; отдельный файл иконки для ярлыков: новый путь = свежая иконка МИМО кэша Windows
+Source: "..\assets\icon.ico"; DestDir: "{app}"; DestName: "steadyvoice.ico"; Flags: ignoreversion
 #ifdef WITHMODEL
 Source: "..\model-bundle\*"; DestDir: "{app}\models"; Flags: recursesubdirs ignoreversion
 #endif
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"; Tasks: desktopicon
+Name: "{group}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"; IconFilename: "{app}\steadyvoice.ico"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"; Tasks: desktopicon; IconFilename: "{app}\steadyvoice.ico"
 
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительно:"

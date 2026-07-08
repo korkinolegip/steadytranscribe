@@ -85,8 +85,9 @@ class MainWindow(QMainWindow):
         logo = QLabel()
         logo_path = _asset("header_logo.png")
         if os.path.exists(logo_path):
-            logo.setPixmap(QPixmap(logo_path).scaledToWidth(210, Qt.SmoothTransformation))
-            logo.setContentsMargins(12, 14, 12, 10)
+            # крупнее: 214px + узкие поля = вся ширина сайдбара (230)
+            logo.setPixmap(QPixmap(logo_path).scaledToWidth(214, Qt.SmoothTransformation))
+            logo.setContentsMargins(8, 12, 8, 8)
         else:
             logo.setText("🎙 SteadyVoice")
             logo.setObjectName("appName")
