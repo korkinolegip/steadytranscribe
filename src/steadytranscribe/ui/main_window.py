@@ -232,7 +232,8 @@ class MainWindow(QMainWindow):
         if self.isActiveWindow():
             self._last_active = time.monotonic()
             return
-        if self._installing or self._busy() or not updater.load_pending():
+        if (self._installing or updater.install_in_progress() or self._busy()
+                or not updater.load_pending()):
             return
         if time.monotonic() - self._last_active < 600:   # 10 минут простоя
             return
@@ -294,7 +295,10 @@ class MainWindow(QMainWindow):
 
         # Тихо ставим отложенное обновление — на выходе, БЕЗ перезапуска
         # (пользователь закрыл программу — не открываем её заново).
-        if not self._installing and updater.load_pending():
+        # install_in_progress: если установщик УЖЕ запущен (кнопка «Обновить
+        # сейчас») — второй не запускаем, два установщика срывают обновление.
+        if (not self._installing and not updater.install_in_progress()
+                and updater.load_pending()):
             self._installing = True
             updater.install_pending(relaunch=False)
         event.accept()

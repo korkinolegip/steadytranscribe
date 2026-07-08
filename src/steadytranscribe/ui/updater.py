@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.6"
+CURRENT_VERSION = "1.5.7"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -89,16 +89,31 @@ def clear_pending() -> None:
         pass
 
 
-def run_installer_silent(installer_path: str, relaunch: bool = True) -> None:
-    """Тихая установка (/VERYSILENT). relaunch=False (/NORELAUNCH) — при выходе:
-    пользователь закрыл программу, не открываем её заново."""
+# установщик уже запущен из этого сеанса — защита от ДВОЙНОГО запуска
+# (двойной запуск = два конфликтующих установщика = сорванное обновление)
+_install_launched = False
+
+
+def install_in_progress() -> bool:
+    return _install_launched
+
+
+def run_installer_silent(installer_path: str, relaunch: bool = True,
+                         visible: bool = False) -> None:
+    """Тихая установка. relaunch=False (/NORELAUNCH) — при выходе: пользователь
+    закрыл программу, не открываем её заново. visible=True (/SILENT вместо
+    /VERYSILENT) — показать узкое окно прогресса установки (для ручного
+    «Обновить сейчас», чтобы было видно, что установка идёт)."""
+    global _install_launched
     import logging
-    args = [installer_path, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART",
+    mode = "/SILENT" if visible else "/VERYSILENT"
+    args = [installer_path, mode, "/SUPPRESSMSGBOXES", "/NORESTART",
             "/LOG=" + os.path.join(app_data_dir(), "install.log")]
     if not relaunch:
         args.append("/NORELAUNCH")
     logging.info("update: запуск установщика %s", args)
     subprocess.Popen(args, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    _install_launched = True
 
 
 def install_pending(relaunch: bool) -> bool:
@@ -365,14 +380,15 @@ class UpdateDialog(QDialog):
             self.progress.setMaximum(0)
 
     def _on_done(self, installer_path: str):
-        self.status.setText("Установка обновления… Программа перезапустится.")
+        self.status.setText("Установка обновления… Появится окно прогресса, "
+                            "после установки программа откроется сама.")
         # запоминаем «на полке»: если установка сорвётся — повторная попытка
         # пройдёт уже без скачивания
         save_pending(self.version, installer_path)
         try:
-            # тихая установка; установщик сам закроет приложение,
-            # поставит новую версию и запустит её заново
-            run_installer_silent(installer_path, relaunch=True)
+            # visible=True: узкое окно прогресса установки (Inno /SILENT) —
+            # видно, что установка идёт; затем программа перезапустится сама
+            run_installer_silent(installer_path, relaunch=True, visible=True)
         except Exception as e:  # noqa: BLE001
             self._on_failed(f"Не удалось запустить установку: {e}")
             return
