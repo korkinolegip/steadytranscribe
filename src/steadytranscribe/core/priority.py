@@ -4,9 +4,14 @@
 ОС сама решает, кому сейчас нужнее CPU. Расшифровка использует «свободные»
 циклы — компьютер остаётся отзывчивым, можно спокойно работать параллельно.
 
-Windows — SetPriorityClass; macOS — taskpolicy -b/-B (фоновый QoS: планировщик
-уводит процесс на энергоэффективные ядра и обратно). os.nice() на macOS не
-подходит: сдвиг относительный и обратно поднять приоритет без прав нельзя.
+Windows — SetPriorityClass (мягко: BELOW_NORMAL лишь уступает активным
+программам, все ядра доступны). macOS — НИЧЕГО НЕ ДЕЛАЕМ НАМЕРЕННО:
+taskpolicy -b (Darwin background) — это не аналог BELOW_NORMAL, а жёсткий
+троттлинг: процесс прижимается к энергоэффективным ядрам, P-ядра простаивают,
+расшифровка замедляется в 3–5 раз (поймано вживую на первой же расшифровке
+Олега: 11 минут вместо ~3, все потоки в состоянии PRI 4T). Планировщик macOS
+и так отдаёт приоритет активному приложению — компьютер не тормозит без
+нашего вмешательства.
 """
 import sys
 
@@ -16,21 +21,10 @@ _NORMAL = 0x00000020
 _IDLE = 0x00000040
 
 
-def _mac_taskpolicy(pid: int, background: bool) -> None:
-    import subprocess
-    subprocess.run(["/usr/sbin/taskpolicy", "-b" if background else "-B",
-                    "-p", str(pid)], capture_output=True, timeout=5)
-
-
 def set_background(on: bool) -> None:
-    """on=True — понизить приоритет (фоновый режим); False — вернуть обычный."""
-    if sys.platform == "darwin":
-        try:
-            import os
-            _mac_taskpolicy(os.getpid(), on)
-        except Exception:  # noqa: BLE001
-            pass
-        return
+    """on=True — понизить приоритет (фоновый режим); False — вернуть обычный.
+    На macOS — no-op (см. докстринг модуля: фоновая политика Darwin душит
+    расшифровку E-ядрами, а штатный планировщик и так всё регулирует)."""
     if sys.platform != "win32":
         return
     try:
@@ -57,14 +51,8 @@ def set_pid_background(pid: int, on: bool) -> None:
     на пониженном приоритете и казалось непомерно долгим."""
     if not pid:
         return
-    if sys.platform == "darwin":
-        try:
-            _mac_taskpolicy(pid, on)
-        except Exception:  # noqa: BLE001
-            pass
-        return
     if sys.platform != "win32":
-        return
+        return   # macOS: no-op — см. докстринг модуля (E-ядра душат диаризацию)
     try:
         import ctypes
         PROCESS_SET_INFORMATION = 0x0200

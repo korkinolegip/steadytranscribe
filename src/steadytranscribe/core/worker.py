@@ -111,10 +111,6 @@ class DiarizationWorker(QThread):
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", env=env,
                 creationflags=flags)
-            if sys.platform == "darwin":
-                # на mac фоновый приоритет нельзя задать флагом запуска —
-                # понижаем сразу после старта (обратимо, см. priority.py)
-                _prio.set_pid_background(self._proc.pid, True)
             from . import jobkill
             jobkill.assign(self._proc.pid)   # умрёт вместе с приложением — без сирот
             turns_raw = None
