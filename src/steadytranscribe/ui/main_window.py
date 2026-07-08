@@ -209,6 +209,8 @@ class MainWindow(QMainWindow):
         # ---- продуктовая аналитика (только события использования, без контента) ----
         from ..storage import analytics
         analytics.track("app_start")
+        # паспорт системы + хвост лога + аварийные дампы — сами, без кнопки
+        QTimer.singleShot(2000, analytics.send_startup_diagnostics)
         self._session_t0 = time.monotonic()
         self._active_sec = 0                 # АКТИВНОЕ время (окно в фокусе), как в Wizr
         self._activity_timer = QTimer(self)
@@ -382,6 +384,11 @@ class MainWindow(QMainWindow):
         ob = getattr(self, "_onboarding", None)
         if ob is not None:
             ob.stop_worker()
+        # фоновая ДОКАЧКА модели (авто-восстановление после обрыва)
+        rw = getattr(self.transcribe_page, "_resume_worker", None)
+        if rw is not None and rw.isRunning():
+            rw.cancel_event.set()
+            rw.wait(2000)
         self.transcribe_page._cleanup_wav()
 
         # СТРАХОВКА ОТ СИРОТ: принудительно валим все дочерние процессы

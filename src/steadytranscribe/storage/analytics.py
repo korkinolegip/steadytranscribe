@@ -149,3 +149,51 @@ def flush(timeout: int = 8) -> bool:
 
 def flush_async() -> None:
     threading.Thread(target=flush, daemon=True).start()
+
+
+def send_startup_diagnostics() -> None:
+    """Диагностика при старте — уходит САМА, без кнопки «Сообщить о проблеме»:
+    1) паспорт системы (ОС/процессор/ядра/память) — понятно, потянет ли компьютер;
+    2) хвост лога прошлого сеанса — ошибки видны удалённо;
+    3) аварийный дамп, если программа падала.
+    Кнопка остаётся как сигнал «у меня проблема», но данные приходят и так."""
+    try:
+        import ctypes
+        import platform
+        ram_gb = 0
+        if sys.platform == "win32":
+            class _MEM(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_uint32),
+                            ("dwMemoryLoad", ctypes.c_uint32),
+                            ("ullTotalPhys", ctypes.c_uint64),
+                            ("ullAvailPhys", ctypes.c_uint64),
+                            ("ullTotalPageFile", ctypes.c_uint64),
+                            ("ullAvailPageFile", ctypes.c_uint64),
+                            ("ullTotalVirtual", ctypes.c_uint64),
+                            ("ullAvailVirtual", ctypes.c_uint64),
+                            ("ullAvailExtendedVirtual", ctypes.c_uint64)]
+            st = _MEM()
+            st.dwLength = ctypes.sizeof(_MEM)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                ram_gb = round(st.ullTotalPhys / (1024 ** 3))
+        track("sys", os=platform.platform(), cpu=platform.processor()[:80],
+              cores=os.cpu_count(), ram_gb=ram_gb)
+    except Exception:  # noqa: BLE001
+        pass
+    try:  # хвост лога прошлого сеанса (лог только технический, без контента)
+        with open(os.path.join(app_data_dir(), "log.txt"), encoding="utf-8",
+                  errors="replace") as f:
+            tail = f.read()[-2500:]
+        if tail.strip():
+            track("log_tail", text=tail)
+    except OSError:
+        pass
+    try:  # аварийный дамп: отправить и очистить (чтобы не слать повторно)
+        crash_path = os.path.join(app_data_dir(), "crash.txt")
+        if os.path.getsize(crash_path) > 0:
+            with open(crash_path, encoding="utf-8", errors="replace") as f:
+                track("crash", text=f.read()[-2000:])
+            open(crash_path, "w").close()
+    except OSError:
+        pass
+    flush_async()

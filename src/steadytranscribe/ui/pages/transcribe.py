@@ -277,12 +277,35 @@ class TranscribePage(QWidget):
     def _model_ready(self) -> bool:
         from ...core import models
         s = settings_store.load()
-        return models.is_downloaded(s.get("model", models.DEFAULT_MODEL))
+        key = s.get("model", models.DEFAULT_MODEL)
+        # ЦЕЛАЯ модель, а не просто «файлы есть»: оборванная загрузка оставляла
+        # полный model.bin без метки целостности → кнопка включалась → ошибка
+        # «модель повреждена» (случай Анастасии, 08.07)
+        return models.is_downloaded(key) and models.is_intact(key)
 
     def _check_model_ready(self):
         if self._model_ready():
             self._model_poll.stop()
             self._refresh()          # модель докачалась — кнопка включается сама
+            return
+        # модель скачана не полностью (обрыв сети/закрыли программу) —
+        # ДОКАЧИВАЕМ САМИ с места обрыва, пользователь ничего не делает
+        from ...core import models
+        s = settings_store.load()
+        key = s.get("model", models.DEFAULT_MODEL)
+        if (models.is_downloaded(key) and not models.is_intact(key)
+                and getattr(self, "_resume_worker", None) is None):
+            from ...storage import analytics
+            analytics.track("model_autoresume")
+            from .models import DownloadWorker
+            self._resume_worker = DownloadWorker(key, self)
+            self._resume_worker.done.connect(
+                lambda: setattr(self, "_resume_worker", None))
+            self._resume_worker.failed.connect(
+                lambda _m: setattr(self, "_resume_worker", None))
+            self._resume_worker.start()
+            self.model_wait.setText("⏳ Модель докачивается после обрыва — кнопка "
+                                    "«Расшифровать» включится сама, ничего делать не нужно.")
 
     def _refresh(self):
         busy = ((self.worker and self.worker.isRunning())
