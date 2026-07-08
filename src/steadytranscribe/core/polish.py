@@ -1,0 +1,101 @@
+"""Локальная «полировка» расшифровки: орфография, пунктуация, связность —
+БЕЗ изменения смысла и БЕЗ отправки текста куда-либо.
+
+Работает через локальный llama-server (OpenAI-совместимый HTTP на 127.0.0.1).
+На маке у пользователя он уже поднят для диктовки (модель qwen3-4b). Текст
+режем на куски, каждый причёсываем отдельно, метки «Имя:» не трогаем.
+
+ЗАЩИТА ОТ ВЫДУМОК (guardrails): если модель раздула/ужала кусок больше чем
+на 35% по словам — берём исходный кусок. Так «причёсывание» не превращается
+в пересказ и не теряет смысл.
+"""
+import json
+import re
+import urllib.request
+
+DEFAULT_URL = "http://127.0.0.1:8737"
+_SYSTEM = (
+    "Ты — редактор-корректор русской речи. Тебе дают фрагмент авто-расшифровки "
+    "разговора. Исправь орфографию, пунктуацию и расставь заглавные буквы. "
+    "Убери слова-паразиты и оговорки (э, ну, как бы, вот) ТОЛЬКО если это не "
+    "меняет смысл. НЕ добавляй ничего от себя, НЕ пересказывай, НЕ сокращай "
+    "содержание, сохрани все факты и имена. Если строка начинается с «Имя:» — "
+    "оставь эту метку в начале без изменений. Верни ТОЛЬКО исправленный текст, "
+    "без пояснений."
+)
+
+
+def is_available(url: str = DEFAULT_URL, timeout: int = 3) -> bool:
+    try:
+        with urllib.request.urlopen(url.rstrip("/") + "/health", timeout=timeout) as r:
+            return json.load(r).get("status") == "ok"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _wc(s: str) -> int:
+    return len(s.split())
+
+
+def _chat(text: str, url: str, timeout: int) -> str:
+    body = json.dumps({
+        "messages": [{"role": "system", "content": _SYSTEM},
+                     {"role": "user", "content": text}],
+        "temperature": 0.2, "max_tokens": 2048,
+        # non-thinking: не нужны рассуждения, только результат
+        "chat_template_kwargs": {"enable_thinking": False},
+    }).encode("utf-8")
+    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions",
+                                 data=body, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = json.load(r)
+    out = data["choices"][0]["message"]["content"].strip()
+    # снять возможный <think>…</think>, если модель всё же порассуждала
+    out = re.sub(r"<think>.*?</think>", "", out, flags=re.S).strip()
+    return out
+
+
+def _chunks(text: str, max_words: int = 220):
+    """Режем по абзацам (репликам), не разрывая их; крупные абзацы — по предложениям."""
+    for para in text.split("\n\n"):
+        if _wc(para) <= max_words:
+            yield para
+            continue
+        buf, n = [], 0
+        for sent in re.split(r"(?<=[.!?…])\s+", para):
+            if n + _wc(sent) > max_words and buf:
+                yield " ".join(buf)
+                buf, n = [], 0
+            buf.append(sent)
+            n += _wc(sent)
+        if buf:
+            yield " ".join(buf)
+
+
+def polish(text: str, url: str = DEFAULT_URL, timeout: int = 120,
+           progress_cb=None, cancel_check=None) -> str:
+    """Причесать весь текст. Возвращает исправленный текст (метки реплик целы).
+    При недоступности сервера/ошибке куска — возвращает исходный кусок."""
+    chunks = list(_chunks(text))
+    done = 0
+    result_map = {}
+    for ch in chunks:
+        if cancel_check and cancel_check():
+            raise InterruptedError("Отменено пользователем.")
+        try:
+            fixed = _chat(ch, url, timeout)
+            # guardrail: сильное изменение длины → не доверяем, берём исходный
+            if not fixed or not (0.65 <= _wc(fixed) / max(_wc(ch), 1) <= 1.35):
+                fixed = ch
+        except Exception:  # noqa: BLE001
+            fixed = ch
+        result_map[ch] = fixed
+        done += 1
+        if progress_cb:
+            progress_cb(done, len(chunks))
+    # собираем обратно по абзацам, подменяя причёсанными кусками
+    polished = text
+    for ch, fixed in result_map.items():
+        if fixed != ch:
+            polished = polished.replace(ch, fixed, 1)
+    return polished

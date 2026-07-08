@@ -145,3 +145,34 @@ class DiarizationWorker(QThread):
             self.finished_ok.emit(dialogue, fragments, voices)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Ошибка разделения: {e}")
+
+
+class PolishWorker(QThread):
+    """Локальная полировка текста через llama-server — в фоне, не морозя окно."""
+    progress = Signal(int, int)            # готово кусков, всего
+    finished_ok = Signal(str)              # причёсанный текст
+    failed = Signal(str)
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(parent)
+        self._text = text
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        from . import polish
+        try:
+            out = polish.polish(
+                self._text,
+                progress_cb=lambda d, n: self.progress.emit(d, n),
+                cancel_check=lambda: self._cancelled)
+            if self._cancelled:
+                self.failed.emit("Отменено пользователем.")
+                return
+            self.finished_ok.emit(out)
+        except InterruptedError:
+            self.failed.emit("Отменено пользователем.")
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(f"Не удалось причесать текст: {e}")

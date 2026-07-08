@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 
 from ...core import convert, diarize
 from ...core.transcriber import Transcriber, TranscriptionResult
-from ...core.worker import DiarizationWorker, TranscriptionWorker
+from ...core.worker import DiarizationWorker, PolishWorker, TranscriptionWorker
 from ...storage import history, settings as settings_store, timings
 from ..minigame import MiniGame
 from ..widgets import card
@@ -357,15 +357,20 @@ class TranscribePage(QWidget):
         self.split_btn.clicked.connect(self._split_speakers)
         self.names_btn = QPushButton("✏️ Имена")
         self.names_btn.clicked.connect(self._rename_speakers)
+        self.polish_btn = QPushButton("✨ Причесать")
+        self.polish_btn.setToolTip("Исправить орфографию и пунктуацию (локально, смысл не меняется)")
+        self.polish_btn.clicked.connect(self._polish_text)
         self.toggle_btn = QPushButton("Исходный")
         self.toggle_btn.clicked.connect(self._toggle_view)
         self.save_btn = QPushButton("💾 В историю")
         self.save_btn.clicked.connect(self._save_edits)
         for b in (self.copy_btn, self.export_btn, self.split_btn,
-                  self.names_btn, self.toggle_btn, self.save_btn):
+                  self.names_btn, self.polish_btn, self.toggle_btn, self.save_btn):
             btns.addWidget(b)
         btns.addStretch()
         rc.addLayout(btns)
+        self.polish_worker = None
+        self._polish_available = None    # кэш проверки llama-server (лениво)
 
         edit_hint = QLabel("Текст можно править прямо здесь — затем «Сохранить правки».")
         edit_hint.setObjectName("hint")
@@ -454,6 +459,13 @@ class TranscribePage(QWidget):
             can_split = diarize.is_available() and self.wav_path and not busy
             self.split_btn.setVisible(bool(can_split) and self.dialogue_text is None)
             self.names_btn.setVisible(self.dialogue_text is not None and self.showing_dialogue)
+            # «Причесать» — только если локальный ИИ-редактор (llama-server) доступен
+            if self._polish_available is None:
+                from ...core import polish
+                self._polish_available = polish.is_available()
+            polishing = self.polish_worker is not None and self.polish_worker.isRunning()
+            self.polish_btn.setVisible(bool(self._polish_available) and not busy)
+            self.polish_btn.setEnabled(not polishing)
             self.toggle_btn.setVisible(self.dialogue_text is not None)
             self.toggle_btn.setText("Исходный" if self.showing_dialogue else "По собеседникам")
 
@@ -552,7 +564,7 @@ class TranscribePage(QWidget):
         analytics.track("cancel")
         self.cancel_btn.setEnabled(False)
         self.status.setText("Отмена…")
-        for w in (self.worker, self.diar_worker):
+        for w in (self.worker, self.diar_worker, self.polish_worker):
             if w:
                 w.cancel()
 
@@ -761,6 +773,51 @@ class TranscribePage(QWidget):
             self.dialogue_text = current
         else:
             self.plain_text = current
+
+    # ---------- полировка текста (локальный ИИ-редактор) ----------
+
+    def _polish_text(self):
+        self._stash_edits()
+        text = self.text.toPlainText().strip()
+        if not text:
+            return
+        if self.polish_worker and self.polish_worker.isRunning():
+            return
+        self._polish_before = text          # для отката, если результат не понравится
+        self.polish_btn.setEnabled(False)
+        self.status.setText("Причёсываю текст…")
+        self.progress_card.show()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.cancel_btn.setEnabled(True)
+        # отмена полировки — той же кнопкой «Отменить»
+        self.polish_worker = PolishWorker(text, parent=self)
+        self.polish_worker.progress.connect(
+            lambda d, n: self.bar.setValue(int(d / max(n, 1) * 100)))
+        self.polish_worker.finished_ok.connect(self._on_polished)
+        self.polish_worker.failed.connect(self._on_polish_failed)
+        self.polish_worker.start()
+        self._refresh()
+
+    def _on_polished(self, text: str):
+        self.polish_worker = None
+        self.progress_card.hide()
+        # заменяем ТЕКУЩУЮ версию (диалог или исходную) причёсанной
+        if self.showing_dialogue:
+            self.dialogue_text = text
+        else:
+            self.plain_text = text
+        self._set_text(text)
+        from ...storage import analytics
+        analytics.track("polish")           # только событие, без содержимого
+        self._refresh()
+
+    def _on_polish_failed(self, msg: str):
+        self.polish_worker = None
+        self.progress_card.hide()
+        if "Отменено" not in msg:
+            self._show_error(msg)
+        self._refresh()
 
     def _rename_speakers(self):
         self._stash_edits()

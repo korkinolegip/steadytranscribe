@@ -407,6 +407,11 @@ class MainWindow(QMainWindow):
         if rw is not None and rw.isRunning():
             rw.cancel_event.set()
             rw.wait(2000)
+        # фоновая полировка текста (llama-server) — прерываем
+        pw = getattr(self.transcribe_page, "polish_worker", None)
+        if pw is not None and pw.isRunning():
+            pw.cancel()
+            pw.wait(2000)
         self.transcribe_page._cleanup_wav()
 
         # СТРАХОВКА ОТ СИРОТ: принудительно валим все дочерние процессы
