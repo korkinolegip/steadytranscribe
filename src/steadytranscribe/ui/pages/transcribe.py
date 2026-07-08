@@ -20,6 +20,7 @@ from ...core import convert, diarize
 from ...core.transcriber import Transcriber, TranscriptionResult
 from ...core.worker import DiarizationWorker, TranscriptionWorker
 from ...storage import history, settings as settings_store, timings
+from ..minigame import MiniGame
 from ..widgets import card
 
 # ниже этого порога уверенности расшифровку помечаем «проверьте текст»
@@ -177,6 +178,11 @@ class TranscribePage(QWidget):
         pc.addWidget(self.bar)
         pc.addLayout(prow)
         col.addWidget(self.progress_card)
+        # мини-игра на время ожидания (как динозаврик в Chrome) — под прогрессом
+        self.game = MiniGame()
+        self.game.hide()
+        col.addWidget(self.game)
+
         # таймер реального времени для ETA
         self._elapsed = QTimer(self)
         self._elapsed.setInterval(1000)
@@ -377,6 +383,7 @@ class TranscribePage(QWidget):
         self.worker.start()
         self._refresh()
         self.progress_card.show()
+        self.game.begin()          # таймкиллер на время ожидания
 
     def _cancel(self):
         # мгновенная реакция: гасим кнопку и сразу шлём сигнал отмены
@@ -450,8 +457,10 @@ class TranscribePage(QWidget):
             self.result = None
             self._cleanup_wav()
             self._reset_file()
+            self.game.hide_now()
             self._show_error("Речь не обнаружена — файл тишины или без голоса.")
             return
+        self.game.finish("расшифровка готова!")
         # запоминаем реальное время расшифровки — прогноз следующих файлов точнее
         timings.record_transcription(self.settings["model"], result.duration,
                                      result.processing_time)
@@ -485,6 +494,7 @@ class TranscribePage(QWidget):
         self._elapsed.stop()
         self.time_label.setText("")
         self.cancel_btn.setEnabled(True)
+        self.game.hide_now()
         self._refresh()
         # отмена — это не ошибка: тихо возвращаемся, без красной плашки
         if "Отменено" in message:
@@ -529,6 +539,7 @@ class TranscribePage(QWidget):
         self.diar_worker.start()
         self._refresh()
         self.progress_card.show()
+        self.game.begin()          # таймкиллер и на время разделения
 
     def _on_diarized(self, dialogue: str):
         self.diar_worker = None
@@ -542,6 +553,7 @@ class TranscribePage(QWidget):
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
+        self.game.finish("собеседники определены!")
         self._refresh()
 
     def _toggle_view(self):
