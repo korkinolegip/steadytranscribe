@@ -28,6 +28,55 @@ from ..widgets import card
 LOW_CONFIDENCE = 0.6
 
 
+class EtaBlender:
+    """«Осталось ~X» = смесь предварительной оценки и живого замера скорости.
+
+    Почему не просто elapsed/progress: шкала прогресса нелинейна (конвертация
+    быстро проходит первые проценты, распознавание медленно идёт остальные) —
+    экстраполяция «от нуля» систематически занижала оценку в начале и весь
+    прогон подтягивала её вверх: у пользователя «осталось» РОСЛО (жалоба Олега).
+
+    Три правила:
+    1. Скорость меряем по скользящему окну ~25 с — фазовые сдвиги шкалы не влияют;
+    2. Вес живого замера растёт с прогрессом: в начале верим предварительной
+       оценке (она из базы реальных замеров этого компьютера и почти честная),
+       к концу — фактической скорости;
+    3. Вниз цифра идёт свободно, вверх — ползёт не быстрее ~1.5 с за тик
+       (честно отражает застревание, но не пугает скачками).
+    """
+
+    WINDOW = 25.0      # окно замера скорости, с
+    MAX_GROW = 1.5     # максимальный рост показанного «осталось» за тик, с
+
+    def __init__(self, est_total: float):
+        self.est_total = max(est_total, 1.0)
+        self._points: list[tuple[float, float]] = []
+        self._shown: float | None = None
+
+    def update(self, elapsed: float, progress: float) -> float:
+        """Вернуть «осталось» в секундах для отображения."""
+        pts = self._points
+        pts.append((elapsed, progress))
+        while len(pts) > 2 and elapsed - pts[0][0] > self.WINDOW:
+            pts.pop(0)
+        live = None
+        dt = elapsed - pts[0][0]
+        dp = progress - pts[0][1]
+        if dt >= 3.0 and dp > 0.004:
+            live = (1.0 - progress) / (dp / dt)
+        prior = max(self.est_total - elapsed, 0.0)
+        if live is None:
+            remaining = prior if self._shown is None else min(prior, self._shown)
+        else:
+            w = min(max((progress - 0.10) / 0.45, 0.0), 0.95)
+            remaining = (1.0 - w) * prior + w * live
+        if self._shown is not None:
+            # естественный ход — минус секунда за тик; рост сдерживаем
+            remaining = min(remaining, self._shown - 1.0 + 1.0 + self.MAX_GROW)
+        self._shown = max(remaining, 0.0)
+        return max(remaining, 1.0)
+
+
 def _format_size(path: str) -> str:
     size = os.path.getsize(path)
     for unit in ("Б", "КБ", "МБ", "ГБ"):
@@ -106,7 +155,7 @@ class TranscribePage(QWidget):
         self.selected_file: str | None = None
         self.result_name: str | None = None       # имя файла, сохраняется после авто-очистки
         self.result: TranscriptionResult | None = None
-        self._est_total: float = 0.0              # текущая оценка длительности операции, сек
+        self._eta: EtaBlender | None = None       # оценка «осталось» текущей операции
         self.wav_path: str | None = None          # для диаризации после расшифровки
         self.plain_text: str | None = None        # исходный текст (без разделения)
         self.dialogue_text: str | None = None     # текст по собеседникам
@@ -429,7 +478,7 @@ class TranscribePage(QWidget):
         import time
         self._start_time = time.monotonic()
         self._last_progress = 0.0
-        self._est_total = getattr(self, "_est_seconds", 0.0) or 60.0
+        self._eta = EtaBlender(getattr(self, "_est_seconds", 0.0) or 60.0)
         self.cancel_btn.setEnabled(True)
         self._elapsed.start()
         self.worker.start()
@@ -484,14 +533,7 @@ class TranscribePage(QWidget):
                 priority.set_pid_background(pid, not active)
 
         elapsed = time.monotonic() - self._start_time
-        p = self._last_progress
-        # СТАБИЛЬНЫЙ ETA: не считаем «остаток» по мгновенному проценту (он скачет),
-        # а ведём обратный отсчёт от предварительной оценки и МЯГКО подтягиваем её
-        # к факту (EMA). Так цифра плавно уменьшается, а не прыгает вверх-вниз.
-        if p > 0.05 and self._est_total > 0:
-            measured = elapsed / p
-            self._est_total += 0.15 * (measured - self._est_total)
-        remaining = max(self._est_total - elapsed, 1.0)
+        remaining = self._eta.update(elapsed, self._last_progress)
         self.time_label.setText(
             f"прошло {self._fmt(elapsed)} · осталось ~{self._fmt(remaining)}")
 
@@ -593,7 +635,7 @@ class TranscribePage(QWidget):
         import time
         self._start_time = time.monotonic()
         self._last_progress = 0.0
-        self._est_total = timings.estimate_diarization(self.result.duration or 0) or 30.0
+        self._eta = EtaBlender(timings.estimate_diarization(self.result.duration or 0) or 30.0)
         self.cancel_btn.setEnabled(True)
         self._elapsed.start()
         self.diar_worker.start()
