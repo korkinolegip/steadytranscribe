@@ -248,14 +248,22 @@ class MainWindow(QMainWindow):
             return
         if time.monotonic() - self._last_active < 600:   # 10 минут простоя
             return
-        # Простой: тихо ставим обновление. Программа перезапустится СВЁРНУТОЙ
-        # (маркер), чтобы не выскочить поверх работы пользователя.
+        # Простой: ставим обновление, ПРЕДУПРЕДИВ уведомлением (иначе «программа
+        # сама закрылась» пугает). Перезапуск — свёрнутой, фокус не крадём.
+        import logging
+        logging.info("update: простой ≥10 мин — устанавливаю отложенное обновление")
         self._installing = True
+        if self.tray is not None:
+            from PySide6.QtWidgets import QSystemTrayIcon
+            self.tray.showMessage(
+                "Обновление SteadyVoice",
+                "Программа простаивает — устанавливаю обновление и вернусь через минуту.",
+                QSystemTrayIcon.Information, 5000)
         updater.mark_restart_minimized()
         if updater.install_pending(relaunch=True):
             from PySide6.QtWidgets import QApplication
             from PySide6.QtCore import QTimer
-            QTimer.singleShot(300, QApplication.quit)
+            QTimer.singleShot(4000, QApplication.quit)   # дать уведомлению показаться
         else:
             self._installing = False
 
@@ -274,6 +282,8 @@ class MainWindow(QMainWindow):
             self.models_page.refresh_rows()
 
     def closeEvent(self, event):
+        import logging
+        logging.info("closeEvent: окно закрывается (spontaneous=%s)", event.spontaneous())
         # Идёт тяжёлая обработка? — спросим подтверждение
         busy = [w for w in (self.transcribe_page.worker, self.transcribe_page.diar_worker)
                 if w and w.isRunning()]

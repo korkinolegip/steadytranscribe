@@ -124,6 +124,17 @@ def main():
     from PySide6.QtWidgets import QApplication, QMessageBox
     log_path = _setup_logging()
     logging.info("=== SteadyTranscribe запуск ===")
+
+    # ОДИН ЭКЗЕМПЛЯР: две копии программы делят одни файлы настроек/обновлений
+    # и мешают друг другу (наблюдалось: установщик перезапустил программу, поверх
+    # запустили вторую → «программа сама закрылась»). Вторая копия тихо выходит.
+    from PySide6.QtCore import QLockFile
+    global _single_lock
+    _single_lock = QLockFile(os.path.join(app_data_dir(), "app.lock"))
+    _single_lock.setStaleLockTime(0)
+    if not _single_lock.tryLock(100):
+        logging.info("Уже запущен другой экземпляр — выходим.")
+        sys.exit(0)
     try:
         logging.info("CPU=%s cores=%s режим=%s ISA=%s OS=%s",
                      platform.processor(), os.cpu_count(), CPU_MODE,
