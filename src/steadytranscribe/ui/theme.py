@@ -46,7 +46,10 @@ QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; border:
 #tertiary {{ color: {TEXT_TERTIARY}; font-size: 12px; }}
 #stats {{ color: {TEXT_SECONDARY}; font-size: 12px; }}
 #warn {{ color: {WARNING}; font-size: 12px; font-weight: 600; }}
-#startHint {{ color: {ACCENT}; font-size: 13px; font-weight: 700; background: transparent; }}
+#startHint {{
+    background: {ACCENT}; color: #06282a; font-size: 13px; font-weight: 700;
+    border-radius: 11px; padding: 5px 12px;
+}}
 QCheckBox {{ spacing: 8px; }}
 QCheckBox::indicator {{ width: 18px; height: 18px; border-radius: 5px;
     border: 1px solid {SEPARATOR}; background: {CARD_BG_ELEVATED}; }}

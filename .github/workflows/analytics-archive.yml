@@ -1,0 +1,50 @@
+name: Analytics Archive
+
+# Архивирует события использования из ntfy-канала в приватные артефакты репозитория
+# (ntfy хранит сообщения недолго). Данные видны только владельцам репозитория.
+# Запрос данных: gh run download -n analytics-<дата> / попросить Клода собрать сводку.
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"     # каждые 4 часа
+  workflow_dispatch:
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch events from ntfy mirrors
+        run: |
+          TOPIC="stc-usage-2bfe9693f4dbd247"
+          : > events_raw.txt
+          for host in ntfy.sh ntfy.envs.net; do
+            curl -s --max-time 30 "https://$host/$TOPIC/json?poll=1&since=6h" >> events_raw.txt || true
+          done
+          # каждое ntfy-сообщение содержит пачку JSON-строк событий в поле message
+          python3 - <<'EOF'
+          import json
+          seen, out = set(), []
+          for line in open("events_raw.txt", encoding="utf-8", errors="replace"):
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  m = json.loads(line)
+              except ValueError:
+                  continue
+              if m.get("event") != "message":
+                  continue
+              for ev_line in (m.get("message") or "").splitlines():
+                  ev_line = ev_line.strip()
+                  if ev_line and ev_line not in seen:
+                      seen.add(ev_line)
+                      out.append(ev_line)
+          open("events.jsonl", "w", encoding="utf-8").write("\n".join(out) + ("\n" if out else ""))
+          print(f"событий: {len(out)}")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: analytics-${{ github.run_id }}
+          path: events.jsonl
+          retention-days: 90

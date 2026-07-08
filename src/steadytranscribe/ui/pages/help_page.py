@@ -7,7 +7,7 @@
 import webbrowser
 
 from PySide6.QtCore import (
-    QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer,
+    QEasingCurve, QParallelAnimationGroup, QPropertyAnimation, Qt, QTimer, Signal,
 )
 from PySide6.QtWidgets import (
     QFrame, QGraphicsOpacityEffect, QGridLayout, QHBoxLayout, QLabel,
@@ -129,9 +129,12 @@ def _trouble_row(icon: str, problem: str, solution: str) -> QFrame:
 
 
 class HelpPage(QWidget):
+    scrolled_to_bottom = Signal()   # человек дочитал гид до конца (один раз)
+
     def __init__(self):
         super().__init__()
         self._animated = False
+        self._bottom_emitted = False
         self._sections: list[QWidget] = []
 
         root = QVBoxLayout(self)
@@ -148,6 +151,7 @@ class HelpPage(QWidget):
         col.setSpacing(22)
         scroll.setWidget(content)
         root.addWidget(scroll)
+        scroll.verticalScrollBar().valueChanged.connect(self._check_bottom)
 
         # --- Hero ---
         hero = QFrame()
@@ -244,6 +248,13 @@ class HelpPage(QWidget):
     def _add_section(self, layout, widget: QWidget):
         layout.addWidget(widget)
         self._sections.append(widget)
+
+    def _check_bottom(self, value):
+        sb = self.sender()
+        if (not self._bottom_emitted and sb.maximum() > 0
+                and value >= sb.maximum() - 8):
+            self._bottom_emitted = True
+            self.scrolled_to_bottom.emit()
 
     def _bob_gift(self):
         import math

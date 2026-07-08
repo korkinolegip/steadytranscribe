@@ -108,6 +108,8 @@ class MiniGame(QWidget):
         self.update()
 
     def _expand(self):
+        from ..storage import analytics
+        analytics.track("game_start")
         self.setFixedHeight(_H)
         self._state = "ready"
         self.setFocus()
@@ -175,6 +177,9 @@ class MiniGame(QWidget):
         self._last = self._score
         self._high = max(self._high, self._score)
         _save_scores(self._high, self._last)
+        from ..storage import analytics
+        analytics.track("game", score=self._score, high=self._high,
+                        sec=int(self._frames * 0.016))
 
     def _tick(self):
         if self._state == "finish":

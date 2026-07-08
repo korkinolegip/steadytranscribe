@@ -416,6 +416,8 @@ class TranscribePage(QWidget):
     def _cancel(self):
         # мгновенная реакция: гасим кнопку и сразу шлём сигнал отмены
         # (ffmpeg убивается принудительно, процесс разделения — тоже)
+        from ...storage import analytics
+        analytics.track("cancel")
         self.cancel_btn.setEnabled(False)
         self.status.setText("Отмена…")
         for w in (self.worker, self.diar_worker):
@@ -492,6 +494,11 @@ class TranscribePage(QWidget):
         # запоминаем реальное время расшифровки — прогноз следующих файлов точнее
         timings.record_transcription(self.settings["model"], result.duration,
                                      result.processing_time)
+        from ...storage import analytics
+        analytics.track("transcribe", audio_sec=int(result.duration),
+                        proc_sec=int(result.processing_time),
+                        words=len(result.text.split()), model=self.settings["model"],
+                        confidence=round(result.confidence, 2))
         self._notify_done(name)
         self.plain_text = result.text
         self._original_text = result.text     # для «правки → словарь»
@@ -578,8 +585,11 @@ class TranscribePage(QWidget):
         # запоминаем время разделения — прогноз следующих файлов точнее
         if self._start_time and self.result:
             import time
-            timings.record_diarization(self.result.duration or 0,
-                                       time.monotonic() - self._start_time)
+            elapsed = time.monotonic() - self._start_time
+            timings.record_diarization(self.result.duration or 0, elapsed)
+            from ...storage import analytics
+            analytics.track("diarize", audio_sec=int(self.result.duration or 0),
+                            proc_sec=int(elapsed))
         self.dialogue_text = dialogue
         self.showing_dialogue = True
         self._set_text(dialogue)
@@ -682,6 +692,8 @@ class TranscribePage(QWidget):
                                  datetime.now())
 
     def _show_error(self, message: str, auto_hide: bool = False):
+        from ...storage import analytics
+        analytics.track("error_shown", msg=message[:160])
         self.error_label.setText(f"⚠️  {message}")
         self.error_card.show()
         if auto_hide:

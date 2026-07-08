@@ -26,7 +26,7 @@ def run_screenshots(out_dir: str) -> int:
         win.grab().save(os.path.join(out_dir, name + ".png"))
 
     pages = {0: "transcribe", 1: "models", 2: "settings", 3: "history",
-             4: "stats", 5: "help"}
+             4: "stats", 5: "help", 6: "feedback"}
     for width, height, tag in ((800, 500, "min"), (1280, 800, "std")):
         win.resize(width, height)
         app.processEvents()

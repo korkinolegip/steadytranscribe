@@ -16,6 +16,7 @@ from . import onboarding, updater
 
 def _asset(name: str) -> str:
     return resource("assets", name)
+from .pages.feedback_page import FeedbackPage
 from .pages.help_page import HelpPage
 from .pages.history_page import HistoryPage
 from .pages.models import ModelsPage
@@ -38,6 +39,7 @@ SIDEBAR = [
     (None, "🧠  Модели", 1),
     ("ПОМОЩЬ", None, None),
     (None, "❓  Как пользоваться", 5),
+    (None, "💬  Обратная связь", 6),
 ]
 
 
@@ -67,6 +69,7 @@ class MainWindow(QMainWindow):
         self.history_page = HistoryPage()
         self.stats_page = StatsPage()
         self.help_page = HelpPage()
+        self.feedback_page = FeedbackPage()
         self.transcribe_page.history_changed.connect(self.history_page.refresh)
         self.transcribe_page.history_changed.connect(self.stats_page.refresh)
 
@@ -120,7 +123,8 @@ class MainWindow(QMainWindow):
         # страницы
         self.stack = QStackedWidget()
         for page in (self.transcribe_page, self.models_page, self.settings_page,
-                     self.history_page, self.stats_page, self.help_page):
+                     self.history_page, self.stats_page, self.help_page,
+                     self.feedback_page):
             self.stack.addWidget(page)
         lay.addWidget(self.stack, stretch=1)
         self.setCentralWidget(root)
@@ -135,23 +139,25 @@ class MainWindow(QMainWindow):
                 self.nav.setCurrentRow(i)
                 break
 
-        # первый запуск: мигающая подсказка у пункта «Расшифровка файлов» —
-        # исчезает НАВСЕГДА после первого клика по нему
+        # первый запуск: подсказка «начните здесь» у пункта «Расшифровка файлов».
+        # Появляется ТОЛЬКО когда человек долистал «Как пользоваться» до конца,
+        # мигает и исчезает НАВСЕГДА после первого клика по пункту.
         self._start_hint = None
         if first_run:
             from PySide6.QtCore import QTimer as _QT
             self._start_hint = QLabel("👈  начните здесь", self)
             self._start_hint.setObjectName("startHint")
             self._start_hint.adjustSize()
+            self._start_hint.hide()
             self._hint_blink = _QT(self)
             self._hint_blink.setInterval(650)
             self._hint_blink.timeout.connect(
                 lambda: self._start_hint and self._start_hint.setVisible(
                     not self._start_hint.isVisible()))
-            self._hint_blink.start()
-            _QT.singleShot(0, self._place_start_hint)
+            self.help_page.scrolled_to_bottom.connect(self._activate_start_hint)
 
-    def _place_start_hint(self):
+    def _activate_start_hint(self):
+        """Гид дочитан до конца — показываем мигающий бейдж «начните здесь»."""
         if not self._start_hint:
             return
         for i in range(self.nav.count()):
@@ -162,6 +168,7 @@ class MainWindow(QMainWindow):
                                       pos.y() + (r.height() - self._start_hint.height()) // 2)
                 self._start_hint.raise_()
                 self._start_hint.show()
+                self._hint_blink.start()
                 break
 
     def _dismiss_start_hint(self):
@@ -198,6 +205,23 @@ class MainWindow(QMainWindow):
         self._startup_dialog_shown = False
         # мини-обучение и базовая модель при первом запуске
         QTimer.singleShot(300, lambda: onboarding.maybe_show(self))
+
+        # ---- продуктовая аналитика (только события использования, без контента) ----
+        from ..storage import analytics
+        analytics.track("app_start")
+        self._session_t0 = time.monotonic()
+        self._active_sec = 0                 # АКТИВНОЕ время (окно в фокусе), как в Wizr
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setInterval(5000)
+        self._activity_timer.timeout.connect(
+            lambda: setattr(self, "_active_sec",
+                            self._active_sec + (5 if self.isActiveWindow() else 0)))
+        self._activity_timer.start()
+        # живая аналитика: отправка накопленного раз в 15 минут
+        self._analytics_timer = QTimer(self)
+        self._analytics_timer.setInterval(15 * 60 * 1000)
+        self._analytics_timer.timeout.connect(analytics.flush_async)
+        self._analytics_timer.start()
 
     def _start_update_flow(self, startup: bool = False):
         if os.environ.get("STEADY_UITEST"):
@@ -237,6 +261,9 @@ class MainWindow(QMainWindow):
             return
         s["last_version"] = updater.CURRENT_VERSION
         settings_store.save(s)
+        if prev:
+            from ..storage import analytics
+            analytics.track("updated", frm=prev, to=updater.CURRENT_VERSION)
         if prev and self.tray is not None:   # prev пуст = самая первая установка
             from PySide6.QtWidgets import QSystemTrayIcon
             from .changelog import whats_new
@@ -313,6 +340,10 @@ class MainWindow(QMainWindow):
             return
         if idx == 0:
             self._dismiss_start_hint()   # человек нашёл, откуда начинать
+        from ..storage import analytics
+        pages = {0: "transcribe", 1: "models", 2: "settings", 3: "history",
+                 4: "stats", 5: "help", 6: "feedback"}
+        analytics.track("nav", page=pages.get(idx, str(idx)))
         self.stack.setCurrentIndex(idx)
         if idx == 3:
             self.history_page.refresh()
@@ -366,4 +397,12 @@ class MainWindow(QMainWindow):
                 and updater.load_pending()):
             self._installing = True
             updater.install_pending(relaunch=False)
+
+        # аналитика: длительность сеанса (общая и АКТИВНАЯ) + отправка пачки
+        import time as _t
+        from ..storage import analytics
+        analytics.track("app_close",
+                        sec=int(_t.monotonic() - self._session_t0),
+                        active_sec=int(self._active_sec))
+        analytics.flush(timeout=6)   # синхронно, коротко — и выходим
         event.accept()

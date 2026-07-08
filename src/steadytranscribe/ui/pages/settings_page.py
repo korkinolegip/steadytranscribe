@@ -47,6 +47,25 @@ class SettingsPage(QWidget):
         title.setObjectName("h1")
         outer.addWidget(title)
 
+        # --- Пользователь ---
+        from PySide6.QtWidgets import QLineEdit
+        from ..onboarding import DEPARTMENTS
+        boxu, layu = card("Пользователь")
+        self.user_edit = QLineEdit(s.get("user_name", ""))
+        self.user_edit.setPlaceholderText("Имя и фамилия")
+        self.user_edit.editingFinished.connect(self._save)
+        _row(layu, "Имя и фамилия", "Закрепляется за этим компьютером.", self.user_edit)
+        self.dept_box = QComboBox()
+        self.dept_box.addItems(DEPARTMENTS[:-1])
+        cur_dept = s.get("user_dept", "")
+        if cur_dept and cur_dept not in DEPARTMENTS:
+            self.dept_box.addItem(cur_dept)
+        if cur_dept:
+            self.dept_box.setCurrentText(cur_dept)
+        self.dept_box.currentIndexChanged.connect(self._save)
+        _row(layu, "Отдел", "Подразделение SteadyControl.", self.dept_box)
+        outer.addWidget(boxu)
+
         # --- Распознавание ---
         box, lay = card("Распознавание")
         self.lang_box = QComboBox()
@@ -124,13 +143,11 @@ class SettingsPage(QWidget):
             lay4.addWidget(news)
         check_btn = QPushButton("Проверить обновления")
         check_btn.clicked.connect(self._check_updates)
-        page_btn = QPushButton("Страница релизов")
-        page_btn.setObjectName("link")
-        page_btn.clicked.connect(lambda: webbrowser.open(updater.RELEASES_PAGE))
+        # ссылки на страницу релизов НЕТ намеренно: пользователям не нужно видеть
+        # техническую историю версий на GitHub (решение Олега)
         urow = QHBoxLayout()
         urow.addWidget(self.update_status, stretch=1)
         urow.addWidget(check_btn)
-        urow.addWidget(page_btn)
         lay4.addLayout(urow)
         self.auto_update_chk = QCheckBox("Обновлять автоматически")
         self.auto_update_chk.setChecked(bool(s.get("auto_update", True)))
@@ -145,23 +162,8 @@ class SettingsPage(QWidget):
         lay4.addWidget(hint4)
         outer.addWidget(box4)
 
-        # --- Помощь / отчёт о проблеме ---
-        box5, lay5 = card("Помощь")
-        report_btn = QPushButton("🐞 Сообщить о проблеме")
-        report_btn.clicked.connect(self._report)
-        lay5.addWidget(report_btn)
-        hint5 = QLabel("Одна кнопка — лог (версия, система, ошибки) уходит разработчику автоматически. Текст диктовок и аудио НЕ отправляются.")
-        hint5.setObjectName("hint")
-        hint5.setWordWrap(True)
-        lay5.addWidget(hint5)
-        tg_btn = QPushButton("✈ Написать разработчику в Telegram")
-        tg_btn.clicked.connect(lambda: webbrowser.open("https://t.me/oleg_broke"))
-        lay5.addWidget(tg_btn)
-        hint_tg = QLabel("По любым вопросам, идеям и пожеланиям — пишите Олегу напрямую.")
-        hint_tg.setObjectName("hint")
-        hint_tg.setWordWrap(True)
-        lay5.addWidget(hint_tg)
-
+        # --- Служебное (помощь/репорты переехали на страницу «Обратная связь») ---
+        box5, lay5 = card("Служебное")
         reset_btn = QPushButton("↺ Сбросить настройки")
         reset_btn.setObjectName("danger")
         reset_btn.clicked.connect(self._reset_settings)
@@ -189,6 +191,8 @@ class SettingsPage(QWidget):
             "initial_prompt": self.prompt_edit.toPlainText().strip(),
             "history_limit": self.history_spin.value(),
             "auto_update": self.auto_update_chk.isChecked(),
+            "user_name": self.user_edit.text().strip(),
+            "user_dept": self.dept_box.currentText(),
         })
         store.save(s)
 
