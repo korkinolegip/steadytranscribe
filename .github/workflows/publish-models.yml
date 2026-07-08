@@ -1,0 +1,44 @@
+name: Publish Models
+
+# Выкладывает файлы моделей Whisper в НАШИ релизы GitHub — независимый от
+# HuggingFace источник. Программа качает модели по цепочке: hf-mirror → HF →
+# наши релизы (+gh-proxy зеркала) — работает даже там, где HF недоступен.
+# Запускать один раз на модель (и при смене версии модели).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - key: large-v3-turbo
+            repo: mobiuslabsgmbh/faster-whisper-large-v3-turbo
+          - key: small
+            repo: Systran/faster-whisper-small
+    steps:
+      - name: Download from HuggingFace
+        run: |
+          mkdir files && cd files
+          for f in config.json model.bin tokenizer.json vocabulary.json vocabulary.txt preprocessor_config.json; do
+            curl -sfL "https://huggingface.co/${{ matrix.repo }}/resolve/main/$f" -o "$f" || rm -f "$f"
+          done
+          ls -la
+
+      - name: Create/update release models-${{ matrix.key }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="models-${{ matrix.key }}"
+          gh release view "$TAG" --repo ${{ github.repository }} >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo ${{ github.repository }} \
+              --title "Модель ${{ matrix.key }}" \
+              --notes "Файлы модели распознавания (источник: ${{ matrix.repo }}). Служебный релиз для загрузчика программы." \
+              --latest=false
+          gh release upload "$TAG" files/* --repo ${{ github.repository }} --clobber
+          gh release view "$TAG" --repo ${{ github.repository }} --json assets --jq '.assets[].name'

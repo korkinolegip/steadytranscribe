@@ -42,11 +42,13 @@ def run_screenshots(out_dir: str) -> int:
         shot(f"{tag}-game-invite")
         game._expand()                   # готов к игре
         shot(f"{tag}-game-ready")
-        game._state = "run"              # бег с препятствиями
+        game._state = "run"              # бег с препятствиями (все виды графики)
         game._score, game._frames = 137, 40
-        game._obstacles = [{"x": 300.0, "size": 32, "kind": "coffee"},
-                           {"x": 450.0, "size": 38, "kind": "moon"},
-                           {"x": 600.0, "size": 26, "kind": "phone"}]
+        game._obstacles = [{"x": 260.0, "size": 36, "kind": "coffee"},
+                           {"x": 380.0, "size": 40, "kind": "tg"},
+                           {"x": 500.0, "size": 34, "kind": "rkn"},
+                           {"x": 620.0, "size": 38, "kind": "vpn"},
+                           {"x": 730.0, "size": 32, "kind": "zzz"}]
         game.update()
         shot(f"{tag}-game-run")
         game._state = "dead"             # проигрыш

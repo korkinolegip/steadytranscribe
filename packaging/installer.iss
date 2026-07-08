@@ -65,6 +65,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\SteadyTranscribe.exe"; Tasks:
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
 
 [Run]
+; Обновить кэш иконок Windows — чтобы новая иконка появилась сразу, без перезагрузки
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden nowait skipifdoesntexist
 ; Обычная установка: галочка «Запустить» в конце мастера.
 Filename: "{app}\SteadyTranscribe.exe"; Description: "Запустить {#AppName}"; Flags: nowait postinstall skipifsilent
 ; Тихое авто-обновление (/VERYSILENT): перезапускаем приложение, КРОМЕ установки

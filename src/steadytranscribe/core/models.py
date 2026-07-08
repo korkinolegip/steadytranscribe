@@ -18,8 +18,21 @@ _REPOS = {
 # Обязательные и опциональные файлы CTranslate2-модели (без запроса API — он нестабилен)
 _REQUIRED = ["config.json", "model.bin", "tokenizer.json"]
 _OPTIONAL = ["vocabulary.json", "vocabulary.txt", "preprocessor_config.json"]
-# hf-mirror ПЕРВЫМ: в некоторых сетях huggingface.co блокируется/рвётся
+# hf-mirror ПЕРВЫМ: в некоторых сетях huggingface.co блокируется/рвётся.
+# ВАЖНО (2026-07): hf-mirror теперь ПЕРЕНАПРАВЛЯЕТ на CDN HuggingFace, поэтому
+# добавлен независимый запасной источник — наши GitHub-релизы с моделями
+# (releases/download/models-<ключ>/) + gh-proxy зеркала, как у автообновления.
 _ENDPOINTS = ["https://hf-mirror.com", "https://huggingface.co"]
+_GH_MODELS = "https://github.com/korkinolegip/steadytranscribe/releases/download"
+_GH_MIRRORS = ["", "https://mirror.ghproxy.com/", "https://ghproxy.net/"]
+
+
+def _bases(key: str, repo: str) -> list:
+    """Все источники модели по порядку: HF-зеркало → HF → GitHub (+зеркала)."""
+    bases = [f"{e}/{repo}/resolve/main" for e in _ENDPOINTS]
+    bases += [f"{m}{_GH_MODELS}/models-{key}" for m in _GH_MIRRORS]
+    return bases
+
 
 DEFAULT_MODEL = "large-v3-turbo"
 
@@ -142,9 +155,8 @@ def download(key: str, progress_cb, cancel_event: threading.Event) -> None:
     dest_dir = os.path.join(models_root(), key)
     os.makedirs(dest_dir, exist_ok=True)
     errors = []
-    for endpoint in _ENDPOINTS:
+    for base in _bases(key, repo):
         try:
-            base = f"{endpoint}/{repo}/resolve/main"
             # 1) выясняем реальные размеры (обязательные + существующие опциональные)
             plan = []  # (имя, url, размер)
             for name in _REQUIRED:
@@ -173,8 +185,8 @@ def download(key: str, progress_cb, cancel_event: threading.Event) -> None:
             return
         except InterruptedError:
             raise
-        except Exception as e:  # noqa: BLE001 — пробуем следующий endpoint
-            errors.append(f"{endpoint.split('//')[1]}: {e}")
+        except Exception as e:  # noqa: BLE001 — пробуем следующий источник
+            errors.append(f"{base.split('//')[-1].split('/')[0]}: {e}")
     raise RuntimeError(
         "Не удалось скачать модель. Проверьте интернет и попробуйте снова "
         "(загрузка продолжится с места обрыва).\nДетали: " + errors[-1][:180])
