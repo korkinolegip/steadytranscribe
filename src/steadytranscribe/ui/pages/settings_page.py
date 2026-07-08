@@ -219,14 +219,22 @@ class SettingsPage(QWidget):
             self._voices_list.addWidget(empty)
             self._voices_box.setVisible(True)
             return
+        from PySide6.QtWidgets import QLineEdit
         for name in names:
             row = QHBoxLayout()
-            lbl = QLabel(f"🗣 {name}")
+            icon = QLabel("🗣")
+            edit = QLineEdit(name)
+            edit.setToolTip("Переименуйте, чтобы исправить или объединить с другим "
+                            "голосом (если это один человек)")
+            # переименование по Enter/уходу фокуса; совпадение имён → слияние
+            edit.editingFinished.connect(
+                lambda e=edit, old=name: self._rename_voice(old, e.text()))
             forget = QPushButton("Удалить")
             forget.setObjectName("danger")
             forget.setFixedWidth(90)
             forget.clicked.connect(lambda _=False, n=name: self._forget_voice(n))
-            row.addWidget(lbl, stretch=1)
+            row.addWidget(icon)
+            row.addWidget(edit, stretch=1)
             row.addWidget(forget)
             self._voices_list.addLayout(row)
 
@@ -238,6 +246,19 @@ class SettingsPage(QWidget):
             from ...storage import voices as voices_store
             voices_store.forget(name)
             self._refresh_voices()
+
+    def _rename_voice(self, old: str, new: str):
+        new = new.strip()
+        if not new or new == old:
+            return
+        from ...storage import voices as voices_store
+        merged = new.lower() in [n.lower() for n in voices_store.all_names() if n != old]
+        voices_store.rename(old, new)
+        self._refresh_voices()
+        if merged:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Голоса объединены",
+                                   f"Голоса объединены в «{new}» — это один человек.")
 
     def _save(self, *_):
         s = store.load()

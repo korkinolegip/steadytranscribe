@@ -126,3 +126,28 @@ def forget(name: str) -> None:
     data = _load()
     data["voices"] = [v for v in data["voices"] if v["name"].lower() != name.strip().lower()]
     _save(data)
+
+
+def rename(old: str, new: str) -> None:
+    """Переименовать голос. Если голос с именем new уже есть — СЛИТЬ отпечатки
+    (это один человек, названный по-разному): усредняем векторы по числу
+    образцов, суммируем n. Так «Олег» + «Олег Коркин» → один голос."""
+    old, new = old.strip(), new.strip()
+    if not new or old.lower() == new.lower():
+        return
+    data = _load()
+    src = next((v for v in data["voices"] if v["name"].lower() == old.lower()), None)
+    if src is None:
+        return
+    dst = next((v for v in data["voices"]
+                if v["name"].lower() == new.lower() and v is not src), None)
+    if dst is None:
+        src["name"] = new                       # просто переименование
+    else:
+        na, nb = dst.get("n", 1), src.get("n", 1)
+        dst["vec"] = _norm([(a * na + b * nb) / (na + nb)
+                            for a, b in zip(dst["vec"], src["vec"])])
+        dst["n"] = na + nb
+        dst["updated"] = int(time.time())
+        data["voices"] = [v for v in data["voices"] if v is not src]
+    _save(data)
