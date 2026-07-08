@@ -3,7 +3,7 @@
 ; установки, имя exe, имя файла установщика) зафиксированы и НЕ меняются —
 ; иначе сломаются автообновления у установленных копий.
 #define AppName "SteadyVoice"
-#define AppVersion "1.5.18"
+#define AppVersion "1.5.19"
 #define AppPublisher "Oleg Korkin (SteadyControl automation)"
 #define AppURL "https://steadycontrol.com"
 

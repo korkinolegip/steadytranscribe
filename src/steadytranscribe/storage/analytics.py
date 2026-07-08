@@ -1,18 +1,35 @@
 """Продуктовая аналитика SteadyVoice — только обезличенные события использования.
 
-ЧТО собираем: события (расшифровка: длительность аудио/время обработки/слова,
-разделение, отмены, ошибки, навигация, игра, обновления, сеансы) + имя/отдел,
-указанные пользователем при первом запуске.
+СХЕМА СОБЫТИЯ (JSON Lines — по строке на событие; легко перенести в любую
+систему аналитики / БД на VPS):
+  t     — unix-время события
+  ev    — тип: app_start, app_close(sec, active_sec), nav(page),
+          transcribe(audio_sec, proc_sec, words, model, confidence),
+          diarize(audio_sec, proc_sec), cancel, error_shown(msg),
+          game_start, game(score, high, sec), updated(frm, to),
+          registered, uninstalled, bug_report, feedback(text), telegram_click
+  m     — ОТПЕЧАТОК КОМПЬЮТЕРА (хэш системного MachineGuid): переживает
+          переустановку → видно «тот же компьютер, зарегистрировался заново»
+  id    — идентификатор УСТАНОВКИ: стирается при удалении программы →
+          удаление = устройство выбыло, переустановка = новое устройство
+  user  — Имя Фамилия (указывает пользователь; объединяет несколько компьютеров)
+  dept  — отдел
+  v     — версия программы
+
+Жизненный цикл: registered → события → uninstalled (шлёт деинсталлятор).
+Пользователь без живых устройств исчезает из сводок; вернулся — registered
+с тем же m = «переустановил на том же компьютере».
+
 ЧЕГО НЕ собираем НИКОГДА: содержимое записей, текст расшифровок, имена файлов.
 
-Как работает: события пишутся локально (полный архив analytics-log.jsonl +
-очередь на отправку), очередь уходит пачкой при закрытии программы и раз в
-15 минут (живая аналитика). Канал доставки — ntfy (как у баг-репортов),
-в облаке архивируется workflow'ом. Отправка «best effort»: нет сети — события
-дождутся следующего раза, ничего не теряется.
+Доставка: локальный архив + очередь → пачкой при закрытии и раз в 15 минут →
+ntfy → архив в приватные артефакты (analytics-archive.yml). Best effort:
+нет сети — события ждут следующего раза, ничего не теряется.
 """
+import hashlib
 import json
 import os
+import sys
 import threading
 import time
 import urllib.request
@@ -50,12 +67,37 @@ def device_id() -> str:
         return did
 
 
+_machine_cache = None
+
+
+def machine_id() -> str:
+    """Стабильный отпечаток КОМПЬЮТЕРА (хэш системного MachineGuid) — переживает
+    переустановку программы. Видно возвращение пользователя на том же ПК."""
+    global _machine_cache
+    if _machine_cache:
+        return _machine_cache
+    try:
+        if sys.platform == "win32":
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                                 r"SOFTWARE\Microsoft\Cryptography", 0,
+                                 winreg.KEY_READ | winreg.KEY_WOW64_64KEY)
+            raw, _ = winreg.QueryValueEx(key, "MachineGuid")
+        else:
+            raw = str(uuid.getnode())
+        _machine_cache = hashlib.sha256(str(raw).encode()).hexdigest()[:12]
+    except Exception:  # noqa: BLE001
+        _machine_cache = "unknown"
+    return _machine_cache
+
+
 def track(event: str, **fields) -> None:
     """Записать событие. Никогда не роняет программу."""
     try:
         from ..ui.updater import CURRENT_VERSION
         s = _load_settings()
-        rec = {"t": int(time.time()), "ev": event, "id": device_id(),
+        rec = {"t": int(time.time()), "ev": event, "m": machine_id(),
+               "id": device_id(),
                "user": s.get("user_name", ""), "dept": s.get("user_dept", ""),
                "v": CURRENT_VERSION}
         rec.update(fields)
