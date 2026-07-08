@@ -1,4 +1,10 @@
-"""Первый запуск: мини-обучение + скачивание базовой модели."""
+"""Первый запуск: скачивание базовой модели (кратко и по делу).
+
+Инструкция «как пользоваться» здесь НЕ дублируется — при первом запуске за
+спиной этого окна уже открыт раздел «Как пользоваться». Окно объясняет одно:
+зачем нужна модель. После нажатия «Скачать» оно НЕ блокирует программу —
+уезжает в левый нижний угол и качает в фоне.
+"""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout,
@@ -8,18 +14,12 @@ from ..core import models
 from ..storage import settings as settings_store
 from .pages.models import DownloadWorker
 
-STEPS = """
-<h2>Как пользоваться</h2>
+INTRO = """
+<h3>Один шаг до начала работы</h3>
 <p style='line-height:1.5'>
-<b>1. Модель распознавания.</b> Скачивается один раз (кнопка ниже). Дальше программа
-работает полностью без интернета — записи не покидают компьютер.<br><br>
-<b>2. Расшифровка.</b> Перетащите аудио- или видеофайл (запись Zoom) в окно
-и нажмите «Расшифровать». Текст появится через несколько минут.<br><br>
-<b>3. Собеседники.</b> На готовом тексте нажмите «Разделить по собеседникам»,
-укажите, сколько человек говорит, — реплики подпишутся. Кнопка «Имена» заменит
-«Собеседник 1» на настоящие имена.<br><br>
-<b>4. Правки и история.</b> Текст можно править прямо в окне и сохранять.
-Все расшифровки — во вкладке «История», с поиском.
+Для распознавания речи программе нужна <b>модель</b> — «мозг», который превращает
+голос в текст. Она скачивается <b>один раз</b>, после этого программа работает
+полностью без интернета: записи не покидают ваш компьютер.
 </p>
 """
 
@@ -28,12 +28,12 @@ class OnboardingDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Добро пожаловать в SteadyVoice")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(520)
         self.worker: DownloadWorker | None = None
 
         lay = QVBoxLayout(self)
         lay.setSpacing(12)
-        text = QLabel(STEPS)
+        text = QLabel(INTRO)
         text.setWordWrap(True)
         text.setTextFormat(Qt.RichText)
         lay.addWidget(text)
@@ -77,6 +77,17 @@ class OnboardingDialog(QDialog):
         self.worker.done.connect(self._on_done)
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
+        # не мешаем знакомиться с программой: уезжаем в левый нижний угол
+        self.skip_btn.setText("Свернуть (качается в фоне)")
+        self._dock_bottom_left()
+
+    def _dock_bottom_left(self):
+        parent = self.parent()
+        if parent is None:
+            return
+        self.adjustSize()
+        g = parent.geometry()
+        self.move(g.x() + 12, g.y() + g.height() - self.height() - 12)
 
     def _on_progress(self, done: int, total: int):
         mb_done, mb_total = done // 1048576, max(total // 1048576, 1)
@@ -96,13 +107,19 @@ class OnboardingDialog(QDialog):
         self.status.setText(f"⚠️ {msg}")
 
     def _finish(self):
-        if self.worker and self.worker.isRunning():
-            self.worker.cancel_event.set()
-            self.worker.wait(2000)
         s = settings_store.load()
         s["onboarded"] = True
         settings_store.save(s)
+        if self.worker and self.worker.isRunning():
+            self.hide()          # скачивание ПРОДОЛЖАЕТСЯ в фоне, не отменяем
+            return
         self.accept()
+
+    def stop_worker(self):
+        """Вызывается при закрытии программы — корректно гасим скачивание."""
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel_event.set()
+            self.worker.wait(2000)
 
 
 def maybe_show(parent) -> None:
@@ -111,4 +128,6 @@ def maybe_show(parent) -> None:
         return   # режим фотосессии UI: модальное окно заблокировало бы съёмку
     s = settings_store.load()
     if not s.get("onboarded") or not models.is_downloaded(s.get("model", models.DEFAULT_MODEL)):
-        OnboardingDialog(parent).exec()
+        dlg = OnboardingDialog(parent)
+        parent._onboarding = dlg   # держим ссылку (не модально)
+        dlg.show()                 # программа доступна: за окном — «Как пользоваться»

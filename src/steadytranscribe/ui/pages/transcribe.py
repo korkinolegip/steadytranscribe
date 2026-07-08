@@ -159,7 +159,20 @@ class TranscribePage(QWidget):
         self.go_btn.setObjectName("primary")
         self.go_btn.clicked.connect(self._start)
         fc.addWidget(self.go_btn)
+        # пока модель не скачана — кнопка неактивна, подсказка объясняет почему
+        self.model_wait = QLabel("⏳ Модель распознавания ещё скачивается — кнопка "
+                                 "«Расшифровать» включится сама, как только всё будет готово.")
+        self.model_wait.setObjectName("warn")
+        self.model_wait.setWordWrap(True)
+        self.model_wait.hide()
+        fc.addWidget(self.model_wait)
         col.addWidget(self.file_card)
+        # автоактивация: проверяем готовность модели, пока она не появится
+        self._model_poll = QTimer(self)
+        self._model_poll.setInterval(2000)
+        self._model_poll.timeout.connect(self._check_model_ready)
+        if not self._model_ready():
+            self._model_poll.start()
 
         # --- прогресс ---
         self.progress_card, pc = card()
@@ -261,9 +274,21 @@ class TranscribePage(QWidget):
         self.toast.setObjectName("toast")
         self.toast.hide()
 
+    def _model_ready(self) -> bool:
+        from ...core import models
+        s = settings_store.load()
+        return models.is_downloaded(s.get("model", models.DEFAULT_MODEL))
+
+    def _check_model_ready(self):
+        if self._model_ready():
+            self._model_poll.stop()
+            self._refresh()          # модель докачалась — кнопка включается сама
+
     def _refresh(self):
         busy = ((self.worker and self.worker.isRunning())
                 or (self.diar_worker and self.diar_worker.isRunning()))
+        model_ready = self._model_ready()
+        self.model_wait.setVisible(not model_ready)
         if self.selected_file:
             self.drop_zone.hide()
             est = getattr(self, "_file_estimate", "")
@@ -274,7 +299,7 @@ class TranscribePage(QWidget):
             self.file_label.show()
             self.clear_btn.show()
             self.go_btn.show()
-            self.go_btn.setEnabled(not busy)
+            self.go_btn.setEnabled(not busy and model_ready)
         else:
             self.drop_zone.setText(
                 "<div style='font-size:15px'>⬆️<br><b>Выберите аудио- или видеофайл</b><br>"

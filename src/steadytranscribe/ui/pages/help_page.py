@@ -194,11 +194,24 @@ class HelpPage(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(12)
+        self._gift_icon = None
         for idx, (icon, title, desc) in enumerate(FEATURES):
-            grid.addWidget(_feature_card(icon, title, desc), idx // 2, idx % 2)
+            card = _feature_card(icon, title, desc)
+            if idx == len(FEATURES) - 1 and len(FEATURES) % 2 == 1:
+                # нечётная последняя (сюрприз) — на всю ширину, столбцы ровные
+                grid.addWidget(card, idx // 2, 0, 1, 2)
+            else:
+                grid.addWidget(card, idx // 2, idx % 2)
+            if icon == "🎁":
+                self._gift_icon = card.findChild(QLabel, "featIcon")
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
         self._add_section(col, grid_host)
+        # подарочек слегка покачивается — видно, что это что-то особенное
+        self._gift_phase = 0.0
+        self._gift_timer = QTimer(self)
+        self._gift_timer.setInterval(50)
+        self._gift_timer.timeout.connect(self._bob_gift)
 
         # --- Если что-то не так ---
         col.addWidget(self._section_title("Если что-то не так"))
@@ -232,10 +245,23 @@ class HelpPage(QWidget):
         layout.addWidget(widget)
         self._sections.append(widget)
 
+    def _bob_gift(self):
+        import math
+        if self._gift_icon is None:
+            return
+        self._gift_phase += 0.18
+        off = int(round(3 * math.sin(self._gift_phase)))
+        self._gift_icon.setContentsMargins(0, 3 + off, 0, 3 - off)
+
+    def hideEvent(self, event):
+        self._gift_timer.stop()
+        super().hideEvent(event)
+
     # ---- плавное проявление секций при первом показе ----
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._gift_timer.start()
         if self._animated:
             return
         self._animated = True

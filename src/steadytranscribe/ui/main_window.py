@@ -135,6 +135,43 @@ class MainWindow(QMainWindow):
                 self.nav.setCurrentRow(i)
                 break
 
+        # первый запуск: мигающая подсказка у пункта «Расшифровка файлов» —
+        # исчезает НАВСЕГДА после первого клика по нему
+        self._start_hint = None
+        if first_run:
+            from PySide6.QtCore import QTimer as _QT
+            self._start_hint = QLabel("👈  начните здесь", self)
+            self._start_hint.setObjectName("startHint")
+            self._start_hint.adjustSize()
+            self._hint_blink = _QT(self)
+            self._hint_blink.setInterval(650)
+            self._hint_blink.timeout.connect(
+                lambda: self._start_hint and self._start_hint.setVisible(
+                    not self._start_hint.isVisible()))
+            self._hint_blink.start()
+            _QT.singleShot(0, self._place_start_hint)
+
+    def _place_start_hint(self):
+        if not self._start_hint:
+            return
+        for i in range(self.nav.count()):
+            if self.nav.item(i).data(Qt.UserRole) == 0:
+                r = self.nav.visualItemRect(self.nav.item(i))
+                pos = self.nav.mapTo(self, r.topRight())
+                self._start_hint.move(pos.x() + 6,
+                                      pos.y() + (r.height() - self._start_hint.height()) // 2)
+                self._start_hint.raise_()
+                self._start_hint.show()
+                break
+
+    def _dismiss_start_hint(self):
+        # getattr: _on_nav может сработать при старте раньше создания подсказки
+        if getattr(self, "_start_hint", None) is not None:
+            self._hint_blink.stop()
+            self._start_hint.hide()
+            self._start_hint.deleteLater()
+            self._start_hint = None
+
         # обновления по схеме Chrome: тихо скачать → отложить → применить
         # при простое / при выходе / при следующем запуске (см. updater.py).
         self._installing = False            # установка уже запущена (не дублировать)
@@ -274,6 +311,8 @@ class MainWindow(QMainWindow):
         idx = current.data(Qt.UserRole)
         if idx is None:
             return
+        if idx == 0:
+            self._dismiss_start_hint()   # человек нашёл, откуда начинать
         self.stack.setCurrentIndex(idx)
         if idx == 3:
             self.history_page.refresh()
@@ -308,6 +347,10 @@ class MainWindow(QMainWindow):
             if row.worker and row.worker.isRunning():
                 row.worker.cancel_event.set()
                 row.worker.wait(2000)
+        # фоновое скачивание модели из окна первого запуска
+        ob = getattr(self, "_onboarding", None)
+        if ob is not None:
+            ob.stop_worker()
         self.transcribe_page._cleanup_wav()
 
         # СТРАХОВКА ОТ СИРОТ: принудительно валим все дочерние процессы
