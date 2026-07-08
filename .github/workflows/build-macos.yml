@@ -77,6 +77,15 @@ jobs:
             curl -sSL --retry 3 -o "$MDIR/$f" \
               "https://huggingface.co/Systran/faster-whisper-tiny/resolve/main/$f"
           done
+          # метка целостности .complete — без неё is_intact() честно считает
+          # модель оборванной и селфтест не запускается
+          python3 -c "
+          import json, os
+          d = os.path.expanduser('~/Library/Application Support/SteadyTranscribe/models/tiny')
+          files = [f for f in os.listdir(d) if not f.startswith('.')]
+          json.dump({f: os.path.getsize(os.path.join(d, f)) for f in files},
+                    open(os.path.join(d, '.complete'), 'w'))
+          "
           ls -la "$MDIR"
 
       - name: Смоук-тест собранного приложения (--selftest)
