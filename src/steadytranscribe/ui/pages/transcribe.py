@@ -422,6 +422,7 @@ class TranscribePage(QWidget):
                                     "«Расшифровать» включится сама, ничего делать не нужно.")
 
     def _refresh(self):
+        polishing = self.polish_worker is not None and self.polish_worker.isRunning()
         busy = ((self.worker and self.worker.isRunning())
                 or (self.diar_worker and self.diar_worker.isRunning()))
         model_ready = self._model_ready()
@@ -436,7 +437,7 @@ class TranscribePage(QWidget):
             self.file_label.show()
             self.clear_btn.show()
             self.go_btn.show()
-            self.go_btn.setEnabled(not busy and model_ready)
+            self.go_btn.setEnabled(not busy and not polishing and model_ready)
         else:
             self.drop_zone.setText(
                 "<div style='font-size:15px'>⬆️<br><b>Выберите аудио- или видеофайл</b><br>"
@@ -445,7 +446,7 @@ class TranscribePage(QWidget):
             self.file_label.hide()
             self.clear_btn.hide()
             self.go_btn.hide()
-        self.progress_card.setVisible(bool(busy))
+        self.progress_card.setVisible(bool(busy) or polishing)
         self.error_card.hide()
         has_result = self.result is not None
         self.result_card.setVisible(has_result)
@@ -456,14 +457,13 @@ class TranscribePage(QWidget):
                 f"🕐 {self._fmt_long(self.result.duration)}    📝 {words} слов    "
                 f"✅ {self.result.confidence * 100:.0f}%    ⚡ {speed:.1f}×")
             self.lowconf.setVisible(self.result.confidence < LOW_CONFIDENCE)
-            can_split = diarize.is_available() and self.wav_path and not busy
+            can_split = diarize.is_available() and self.wav_path and not busy and not polishing
             self.split_btn.setVisible(bool(can_split) and self.dialogue_text is None)
             self.names_btn.setVisible(self.dialogue_text is not None and self.showing_dialogue)
             # «Причесать» — только если локальный ИИ-редактор (llama-server) доступен
             if self._polish_available is None:
                 from ...core import polish
                 self._polish_available = polish.is_available()
-            polishing = self.polish_worker is not None and self.polish_worker.isRunning()
             self.polish_btn.setVisible(bool(self._polish_available) and not busy)
             self.polish_btn.setEnabled(not polishing)
             self.toggle_btn.setVisible(self.dialogue_text is not None)
@@ -748,7 +748,7 @@ class TranscribePage(QWidget):
             self._voice_guesses = {}
         for key, g in self._voice_guesses.items():
             if g.get("confident"):
-                dialogue = re.sub(rf"^{re.escape(key)}:", f"{g['name']}:",
+                dialogue = re.sub(rf"^{re.escape(key)}:", lambda m, nm=g["name"]: f"{nm}:",
                                   dialogue, flags=re.M)
                 # клип и центроид «переезжают» на узнанное имя
                 for store in (self._voice_clips, self._voice_centroids):
@@ -843,12 +843,19 @@ class TranscribePage(QWidget):
             from ...storage import voices as voices_store
             analytics.track("rename_speakers")
             for sp, name in dlg.mapping().items():
-                # замена только в НАЧАЛЕ реплики — тексты реплик не трогаем
+                # замена только в НАЧАЛЕ реплики — тексты реплик не трогаем.
+                # replacement через lambda: «\» в имени не считается ссылкой (иначе re.error)
                 self.dialogue_text = re.sub(
-                    rf"^{re.escape(sp)}:", f"{name}:", self.dialogue_text, flags=re.M)
-                # ЗАПОМИНАЕМ голос под этим именем — узнаем в следующих записях.
-                # Только по достаточному образцу (≥3с чистой речи): короткий
-                # отпечаток шумный и ведёт к ложным узнаваниям (см. разбор голосов)
+                    rf"^{re.escape(sp)}:", lambda m, nm=name: f"{nm}:",
+                    self.dialogue_text, flags=re.M)
+                # Если sp уже было ИМЕНЕМ (а не «Собеседник N») — это правка ранее
+                # подтверждённого имени: ПЕРЕИМЕНОВЫВАЕМ голос в базе, иначе плодим
+                # дубль-сироту («Оле» останется рядом с «Олег»).
+                if not re.fullmatch(r"Собеседник \d+", sp) and sp != name:
+                    voices_store.rename(sp, name)
+                # ЗАПОМИНАЕМ/дополняем отпечаток под актуальным именем. Только по
+                # достаточному образцу (≥3с чистой речи): короткий отпечаток шумный
+                # и ведёт к ложным узнаваниям (см. разбор голосов).
                 if sp in centroids and self._voice_sample_ok(sp):
                     voices_store.enroll(name, centroids[sp])
                 # клип и центроид «переезжают» на новое имя
@@ -942,7 +949,11 @@ class TranscribePage(QWidget):
 
     def _show_error(self, message: str, auto_hide: bool = False):
         from ...storage import analytics
-        analytics.track("error_shown", msg=message[:160])
+        # приватность: НЕ отправляем в аналитику имена файлов и пути — текст ошибки
+        # ffmpeg часто содержит путь входного файла. Вырезаем их перед отправкой.
+        safe = re.sub(r"\S+\.\w{1,4}(?=[\s:]|$)", "<файл>", message)   # имена файлов
+        safe = re.sub(r"[/\\][^\s:]+", "", safe)                       # сегменты путей
+        analytics.track("error_shown", msg=safe[:120])
         self.error_label.setText(f"⚠️  {message}")
         self.error_card.show()
         if auto_hide:

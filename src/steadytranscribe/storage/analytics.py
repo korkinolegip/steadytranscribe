@@ -153,15 +153,26 @@ def flush(timeout: int = 8) -> bool:
                 return True
             if not data.strip():
                 return True
-        body = data.encode("utf-8")[-60000:]      # лимит сообщения ntfy
-        if _send(body, timeout):
-            with _lock:
-                try:
-                    os.remove(_queue_path())
-                except OSError:
-                    pass
-            return True
-        return False
+        # шлём ЦЕЛЫМИ строками пачками ≤60КБ (лимит ntfy): не теряем «голову»
+        # очереди и не рвём UTF-8/JSON посреди символа (как делал срез по байтам).
+        lines = [ln for ln in data.splitlines() if ln.strip()]
+        batch, size = [], 0
+        for ln in lines:
+            lb = len(ln.encode("utf-8")) + 1
+            if size + lb > 60000 and batch:
+                if not _send(("\n".join(batch) + "\n").encode("utf-8"), timeout):
+                    return False
+                batch, size = [], 0
+            batch.append(ln)
+            size += lb
+        if batch and not _send(("\n".join(batch) + "\n").encode("utf-8"), timeout):
+            return False
+        with _lock:
+            try:
+                os.remove(_queue_path())
+            except OSError:
+                pass
+        return True
     except Exception:  # noqa: BLE001
         return False
 

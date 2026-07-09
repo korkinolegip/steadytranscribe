@@ -75,54 +75,54 @@ def _chat(text: str, url: str, timeout: int) -> str:
     return out
 
 
-def _chunks(text: str, max_words: int = 220):
-    """Режем по абзацам (репликам), не разрывая их; крупные абзацы — по предложениям."""
-    for para in text.split("\n\n"):
-        if _wc(para) <= max_words:
-            yield para
-            continue
-        buf, n = [], 0
-        for sent in re.split(r"(?<=[.!?…])\s+", para):
-            if n + _wc(sent) > max_words and buf:
-                yield " ".join(buf)
-                buf, n = [], 0
-            buf.append(sent)
-            n += _wc(sent)
-        if buf:
+def _para_chunks(para: str, max_words: int = 220):
+    """Куски ОДНОГО абзаца (реплики): целиком или по предложениям, если крупный."""
+    if _wc(para) <= max_words:
+        yield para
+        return
+    buf, n = [], 0
+    for sent in re.split(r"(?<=[.!?…])\s+", para):
+        if n + _wc(sent) > max_words and buf:
             yield " ".join(buf)
+            buf, n = [], 0
+        buf.append(sent)
+        n += _wc(sent)
+    if buf:
+        yield " ".join(buf)
 
 
 def polish(text: str, url: str = DEFAULT_URL, timeout: int = 120,
            progress_cb=None, cancel_check=None) -> str:
     """Причесать весь текст. Возвращает исправленный текст (метки реплик целы).
-    При недоступности сервера/ошибке куска — возвращает исходный кусок."""
-    chunks = list(_chunks(text))
+    При недоступности сервера/ошибке куска — возвращает исходный кусок.
+
+    Собираем результат ПОЗИЦИОННО (абзац за абзацем), а не глобальным replace:
+    иначе короткий кусок («Да») нашёлся бы подстрокой в другом слове, одинаковые
+    куски схлопывались бы, а кусок с изменённым пробелом молча терялся."""
+    paras = text.split("\n\n")
+    chunked = [list(_para_chunks(p)) for p in paras]
+    total = sum(len(c) for c in chunked) or 1
     done = 0
-    result_map = {}
-    for ch in chunks:
-        if cancel_check and cancel_check():
-            raise InterruptedError("Отменено пользователем.")
-        label, body = _split_label(ch)
-        if not body.strip():
-            result_map[ch] = ch                 # только метка/пусто — не трогаем
+    out_paras = []
+    for chunks in chunked:
+        fixed_chunks = []
+        for ch in chunks:
+            if cancel_check and cancel_check():
+                raise InterruptedError("Отменено пользователем.")
+            label, body = _split_label(ch)
+            if not body.strip():
+                fixed_chunks.append(ch)          # только метка/пусто — не трогаем
+            else:
+                try:
+                    fixed_body = _chat(body, url, timeout)
+                    # guardrail: сильное изменение длины → берём исходное тело
+                    if not fixed_body or not (0.65 <= _wc(fixed_body) / max(_wc(body), 1) <= 1.35):
+                        fixed_body = body
+                except Exception:  # noqa: BLE001
+                    fixed_body = body
+                fixed_chunks.append(label + fixed_body)   # метку возвращаем дословно
             done += 1
             if progress_cb:
-                progress_cb(done, len(chunks))
-            continue
-        try:
-            fixed_body = _chat(body, url, timeout)
-            # guardrail: сильное изменение длины → не доверяем, берём исходное тело
-            if not fixed_body or not (0.65 <= _wc(fixed_body) / max(_wc(body), 1) <= 1.35):
-                fixed_body = body
-        except Exception:  # noqa: BLE001
-            fixed_body = body
-        result_map[ch] = label + fixed_body     # метку возвращаем дословно
-        done += 1
-        if progress_cb:
-            progress_cb(done, len(chunks))
-    # собираем обратно по абзацам, подменяя причёсанными кусками
-    polished = text
-    for ch, fixed in result_map.items():
-        if fixed != ch:
-            polished = polished.replace(ch, fixed, 1)
-    return polished
+                progress_cb(done, total)
+        out_paras.append(" ".join(fixed_chunks))
+    return "\n\n".join(out_paras)

@@ -55,7 +55,11 @@ def _kmeans(X, k: int, iters: int = 80, seed: int = 7):
     cents = [X[rng.randint(len(X))]]
     for _ in range(k - 1):
         d2 = np.min([np.sum((X - c) ** 2, axis=1) for c in cents], axis=0)
-        cents.append(X[rng.choice(len(X), p=d2 / (d2.sum() + 1e-12))])
+        s = float(d2.sum())
+        if s <= 1e-12:                       # точки совпали — берём произвольную
+            cents.append(X[rng.randint(len(X))])
+        else:                                # p = d2/s суммируется в 1 (без +eps, иначе ValueError)
+            cents.append(X[rng.choice(len(X), p=d2 / s)])
     C = np.stack(cents)
     lab = np.zeros(len(X), dtype=int)
     for _ in range(iters):
@@ -181,6 +185,11 @@ def diarize(wav_path: str, num_speakers: int, status_cb, cancel_check) -> list[S
         lo, hi = max(0, i - _SMOOTH_RADIUS), min(len(lab_sorted), i + _SMOOTH_RADIUS + 1)
         vals, cnt = np.unique(lab_sorted[lo:hi], return_counts=True)
         smoothed[i] = vals[np.argmax(cnt)]
+
+    # перенумеровать метки в непрерывный ряд 0..m-1: k-means/сглаживание могли
+    # оставить пустой кластер, иначе в диалоге будут «Собеседник 1» и «Собеседник 3»
+    remap = {old: new for new, old in enumerate(sorted(set(int(x) for x in smoothed)))}
+    smoothed = np.array([remap[int(x)] for x in smoothed], dtype=int)
 
     # центроид каждого голоса (для запоминания/узнавания между записями):
     # среднее нормированных эмбеддингов его окон, снова L2-нормируем

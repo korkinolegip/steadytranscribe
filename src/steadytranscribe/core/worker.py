@@ -112,10 +112,15 @@ class DiarizationWorker(QThread):
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", env=env,
                 creationflags=flags)
+            if self._cancelled:              # отмену нажали в момент старта — убить сразу
+                self._kill_proc()
+                self.failed.emit("Отменено пользователем.")
+                return
             from . import jobkill
             jobkill.assign(self._proc.pid)   # умрёт вместе с приложением — без сирот
             turns_raw = None
             embed_raw = {}
+            err_msg = ""
             for line in self._proc.stdout:
                 if self._cancelled:
                     self._kill_proc()
@@ -128,12 +133,14 @@ class DiarizationWorker(QThread):
                     turns_raw = json.loads(line[7:])
                 elif line.startswith("EMBED "):
                     embed_raw = json.loads(line[6:])
+                elif line.startswith("ERROR "):
+                    err_msg = line[6:]          # причина сбоя из подпроцесса
             self._proc.wait()
             if self._cancelled:
                 self.failed.emit("Отменено пользователем.")
                 return
             if turns_raw is None:
-                raise RuntimeError("не удалось выполнить разделение")
+                raise RuntimeError(err_msg or "не удалось выполнить разделение")
             turns = [diarize.SpeakerTurn(sp, st, en) for sp, st, en in turns_raw]
             dialogue = diarize.build_dialogue(self._words, turns)
             if not dialogue.strip():

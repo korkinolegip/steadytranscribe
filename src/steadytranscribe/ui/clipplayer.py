@@ -26,12 +26,12 @@ class ClipPlayer:
         self._on_stop = on_stop
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="steadyvoice_clip_")
         os.close(fd)
+        self._tmp = path            # запоминаем сразу: stop() уберёт файл даже при сбое записи
         with wave.open(path, "wb") as w:
             w.setnchannels(1)
             w.setsampwidth(2)
             w.setframerate(sample_rate)
             w.writeframes(pcm_bytes)
-        self._tmp = path
         if sys.platform == "darwin":
             self._proc = subprocess.Popen(["/usr/bin/afplay", path])
         elif sys.platform == "win32":

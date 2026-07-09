@@ -133,8 +133,8 @@ def rename(old: str, new: str) -> None:
     (это один человек, названный по-разному): усредняем векторы по числу
     образцов, суммируем n. Так «Олег» + «Олег Коркин» → один голос."""
     old, new = old.strip(), new.strip()
-    if not new or old.lower() == new.lower():
-        return
+    if not new or old == new:                   # только точное совпадение — no-op;
+        return                                  # регистровую правку («иван»→«Иван») пропускаем дальше
     data = _load()
     src = next((v for v in data["voices"] if v["name"].lower() == old.lower()), None)
     if src is None:
