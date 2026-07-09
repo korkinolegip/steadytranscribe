@@ -848,16 +848,16 @@ class TranscribePage(QWidget):
                 self.dialogue_text = re.sub(
                     rf"^{re.escape(sp)}:", lambda m, nm=name: f"{nm}:",
                     self.dialogue_text, flags=re.M)
-                # Если sp уже было ИМЕНЕМ (а не «Собеседник N») — это правка ранее
-                # подтверждённого имени: ПЕРЕИМЕНОВЫВАЕМ голос в базе, иначе плодим
-                # дубль-сироту («Оле» останется рядом с «Олег»).
-                if not re.fullmatch(r"Собеседник \d+", sp) and sp != name:
+                # «Собеседник N» → ПЕРВОЕ имя: запоминаем отпечаток (только по образцу
+                # ≥3с — короткий шумит и даёт ложные узнавания). Уже-имя → это ПРАВКА
+                # ранее подтверждённого имени: переименовываем голос в базе. Именно
+                # elif: иначе для уже-имени сделали бы и rename, и enroll — дубль-сирота
+                # и двойной учёт одного образца.
+                if re.fullmatch(r"Собеседник \d+", sp):
+                    if sp in centroids and self._voice_sample_ok(sp):
+                        voices_store.enroll(name, centroids[sp])
+                elif sp != name:
                     voices_store.rename(sp, name)
-                # ЗАПОМИНАЕМ/дополняем отпечаток под актуальным именем. Только по
-                # достаточному образцу (≥3с чистой речи): короткий отпечаток шумный
-                # и ведёт к ложным узнаваниям (см. разбор голосов).
-                if sp in centroids and self._voice_sample_ok(sp):
-                    voices_store.enroll(name, centroids[sp])
                 # клип и центроид «переезжают» на новое имя
                 for store in (clips, centroids):
                     if sp in store:
@@ -949,10 +949,11 @@ class TranscribePage(QWidget):
 
     def _show_error(self, message: str, auto_hide: bool = False):
         from ...storage import analytics
-        # приватность: НЕ отправляем в аналитику имена файлов и пути — текст ошибки
-        # ffmpeg часто содержит путь входного файла. Вырезаем их перед отправкой.
-        safe = re.sub(r"\S+\.\w{1,4}(?=[\s:]|$)", "<файл>", message)   # имена файлов
-        safe = re.sub(r"[/\\][^\s:]+", "", safe)                       # сегменты путей
+        # приватность: НЕ отправляем в аналитику имена файлов и пути. Текст ошибки
+        # ffmpeg содержит путь входного файла (часто с ПРОБЕЛАМИ и кириллицей),
+        # поэтому режем путь целиком — от «/» или «\» до двоеточия/конца строки.
+        safe = re.sub(r"[/\\][^\n:]+", " <путь>", message)    # путь (с пробелами)
+        safe = re.sub(r"\S+\.\w{1,5}\b", "<файл>", safe)      # одиночные имена файлов
         analytics.track("error_shown", msg=safe[:120])
         self.error_label.setText(f"⚠️  {message}")
         self.error_card.show()
