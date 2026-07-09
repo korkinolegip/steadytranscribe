@@ -296,8 +296,10 @@ class SettingsPage(QWidget):
 
     def _check_updates(self):
         self.update_status.setText("Проверяю…")
+        self._check_error = None
         self._checker = updater.UpdateChecker(self)
         self._checker.update_available.connect(self._on_update)
+        self._checker.check_failed.connect(self._on_check_failed)
         self._checker.finished.connect(self._on_check_done)
         self._checker.start()
 
@@ -307,6 +309,12 @@ class SettingsPage(QWidget):
         self.update_status.setText(f"Доступна версия {version}!")
         updater.UpdateDialog(version, url, sha, self).exec()
 
+    def _on_check_failed(self, reason: str):
+        # проверка НЕ удалась — честно говорим, а не «последняя версия»
+        self._check_error = reason
+        self.update_status.setText(f"⚠️ Не удалось проверить обновления ({reason})")
+
     def _on_check_done(self):
-        if self.update_status.text() == "Проверяю…":
+        # ошибку уже показал _on_check_failed; здесь — только реальное «нет новых»
+        if self.update_status.text() == "Проверяю…" and not getattr(self, "_check_error", None):
             self.update_status.setText(f"У вас последняя версия ({updater.CURRENT_VERSION}) ✅")

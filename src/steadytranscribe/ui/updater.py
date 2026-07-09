@@ -19,13 +19,13 @@ import urllib.request
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton,
+    QDialog, QHBoxLayout, QLabel, QProgressBar, QPushButton,
     QVBoxLayout,
 )
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.31"
+CURRENT_VERSION = "1.5.32"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 
@@ -366,6 +366,7 @@ class UpdateChecker(QThread):
     Windows: /releases/latest (mac-релизы туда не попадают — они prerelease).
     macOS: список /releases, свои теги mac-v* (в т.ч. prerelease)."""
     update_available = Signal(str, str, str)
+    check_failed = Signal(str)      # проверка не удалась (сеть/лимит) ≠ «нет обновлений»
 
     def _check_windows(self):
         req = urllib.request.Request(
@@ -427,8 +428,14 @@ class UpdateChecker(QThread):
                 self._check_mac()
             else:
                 self._check_windows()
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001
+            # различаем «обновлений нет» (тихо) от «не смог проверить» (сеть,
+            # лимит GitHub API) — второе не должно выглядеть как «последняя версия»
+            import urllib.error
+            msg = "лимит запросов GitHub — попробуйте позже" \
+                if isinstance(e, urllib.error.HTTPError) and e.code == 403 \
+                else "нет связи с сервером обновлений"
+            self.check_failed.emit(msg)
 
 
 class InstallerDownloader(QThread):
