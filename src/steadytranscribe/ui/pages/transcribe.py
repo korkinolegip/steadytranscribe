@@ -140,6 +140,12 @@ class SpeakerNamesDialog(QDialog):
             hint.setObjectName("hint")
             hint.setWordWrap(True)
             lay.addWidget(hint)
+        else:
+            hint = QLabel("Прослушивание ▶ недоступно: аудио уже очищено. Чтобы слушать голоса "
+                          "и запоминать их — расшифруйте файл заново и сразу нажмите «Имена».")
+            hint.setObjectName("hint")
+            hint.setWordWrap(True)
+            lay.addWidget(hint)
         form = QFormLayout()
         self.edits: dict[str, QLineEdit] = {}
         for sp in speakers:
@@ -714,7 +720,7 @@ class TranscribePage(QWidget):
         self.progress_card.show()
         self.game.begin()          # таймкиллер и на время разделения
 
-    def _on_diarized(self, dialogue: str, fragments: dict, voices: dict):
+    def _on_diarized(self, dialogue: str, clips: dict, voices: dict):
         self.diar_worker = None
         self._elapsed.stop()
         self.time_label.setText("")
@@ -727,17 +733,11 @@ class TranscribePage(QWidget):
             analytics.track("diarize", audio_sec=int(self.result.duration or 0),
                             proc_sec=int(elapsed),
                             speakers=getattr(self, "_diar_speakers", 0))
-        # вырезаем образцовый фрагмент каждого голоса, пока WAV ещё на месте —
-        # чтобы «прослушать голос» работало и после авто-очистки файла
-        self._voice_clips: dict[str, tuple] = {}
-        if self.wav_path and os.path.exists(self.wav_path):
-            from .. import clipplayer
-            for spk, (st, en) in fragments.items():
-                try:
-                    pcm, sr = clipplayer.extract_pcm(self.wav_path, st, en)
-                    self._voice_clips[f"Собеседник {spk + 1}"] = (pcm, sr)
-                except Exception:  # noqa: BLE001
-                    pass
+        # клипы образцов голоса уже вырезаны в ВОРКЕРЕ (пока WAV был точно на месте) —
+        # берём готовыми. Это включает и ▶ «прослушать», и запоминание голосов.
+        import logging
+        self._voice_clips: dict[str, tuple] = dict(clips)
+        logging.info("clips: получено из воркера=%d", len(self._voice_clips))
         # центроиды голосов — для запоминания и узнавания между записями
         self._voice_centroids: dict[str, list] = dict(voices)
         # УЗНАВАНИЕ: если голос совпал с сохранённым — подставляем имя сразу

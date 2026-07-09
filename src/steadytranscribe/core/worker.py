@@ -58,7 +58,7 @@ class TranscriptionWorker(QThread):
 class DiarizationWorker(QThread):
     """Готовый результат + WAV → текст-диалог по собеседникам."""
     progress = Signal(str, float)
-    # текст-диалог, {«Собеседник N»: (start, end)}, {«Собеседник N»: вектор-центроид}
+    # текст-диалог, {«Собеседник N»: (pcm_bytes, sr)} клипы для ▶, {«Собеседник N»: центроид}
     finished_ok = Signal(str, dict, dict)
     failed = Signal(str)
 
@@ -147,9 +147,19 @@ class DiarizationWorker(QThread):
                 raise RuntimeError("Не удалось разделить запись на собеседников.")
             # интервалы образцовых фрагментов — для кнопки «прослушать голос»
             fragments = diarize.speaker_fragments(self._words, turns)
+            # вырезаем клипы ПРЯМО ЗДЕСЬ, пока WAV точно на месте (diarize только что
+            # его читал) — чтобы ▶ и запоминание голосов не зависели от того, доживёт
+            # ли временный wav до окна «Имена» в главном потоке (раньше зависели → ▶ пропадали)
+            from ..ui import clipplayer
+            clips: dict = {}
+            for spk, (st, en) in fragments.items():
+                try:
+                    clips[f"Собеседник {int(spk) + 1}"] = clipplayer.extract_pcm(self._wav, st, en)
+                except Exception:  # noqa: BLE001
+                    pass
             # центроиды по подписи «Собеседник N» — для запоминания/узнавания
             voices = {f"Собеседник {int(k) + 1}": v for k, v in embed_raw.items()}
-            self.finished_ok.emit(dialogue, fragments, voices)
+            self.finished_ok.emit(dialogue, clips, voices)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(f"Ошибка разделения: {e}")
 
