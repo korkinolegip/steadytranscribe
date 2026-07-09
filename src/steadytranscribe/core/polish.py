@@ -3,7 +3,10 @@
 
 Работает через локальный llama-server (OpenAI-совместимый HTTP на 127.0.0.1).
 На маке у пользователя он уже поднят для диктовки (модель qwen3-4b). Текст
-режем на куски, каждый причёсываем отдельно, метки «Имя:» не трогаем.
+режем на куски (по репликам). Метку говорящего («Собеседник N:», «Имя:»)
+ОТРЕЗАЕМ перед отправкой в модель и возвращаем дословно — так полировка не
+переписывает и не теряет метки, а привязка голоса по ним (клипы ▶, отпечатки)
+не рвётся.
 
 ЗАЩИТА ОТ ВЫДУМОК (guardrails): если модель раздула/ужала кусок больше чем
 на 35% по словам — берём исходный кусок. Так «причёсывание» не превращается
@@ -35,6 +38,23 @@ def is_available(url: str = DEFAULT_URL, timeout: int = 3) -> bool:
 
 def _wc(s: str) -> int:
     return len(s.split())
+
+
+_LABEL_RE = re.compile(r"^([^:\n]{1,40}:[ \t]+)")
+
+
+def _split_label(chunk: str):
+    """Отделить метку говорящего в начале куска → (метка, тело).
+
+    Метка («Собеседник 2: », «Антон: ») дальше в модель НЕ уходит и
+    возвращается в результат дословно: полировка не может её переписать
+    или потерять, а привязка клипов голоса (по метке) остаётся целой.
+    Если метки нет — метка пустая, тело = весь кусок.
+    """
+    m = _LABEL_RE.match(chunk)
+    if m:
+        return chunk[:m.end()], chunk[m.end():]
+    return "", chunk
 
 
 def _chat(text: str, url: str, timeout: int) -> str:
@@ -82,14 +102,21 @@ def polish(text: str, url: str = DEFAULT_URL, timeout: int = 120,
     for ch in chunks:
         if cancel_check and cancel_check():
             raise InterruptedError("Отменено пользователем.")
+        label, body = _split_label(ch)
+        if not body.strip():
+            result_map[ch] = ch                 # только метка/пусто — не трогаем
+            done += 1
+            if progress_cb:
+                progress_cb(done, len(chunks))
+            continue
         try:
-            fixed = _chat(ch, url, timeout)
-            # guardrail: сильное изменение длины → не доверяем, берём исходный
-            if not fixed or not (0.65 <= _wc(fixed) / max(_wc(ch), 1) <= 1.35):
-                fixed = ch
+            fixed_body = _chat(body, url, timeout)
+            # guardrail: сильное изменение длины → не доверяем, берём исходное тело
+            if not fixed_body or not (0.65 <= _wc(fixed_body) / max(_wc(body), 1) <= 1.35):
+                fixed_body = body
         except Exception:  # noqa: BLE001
-            fixed = ch
-        result_map[ch] = fixed
+            fixed_body = body
+        result_map[ch] = label + fixed_body     # метку возвращаем дословно
         done += 1
         if progress_cb:
             progress_cb(done, len(chunks))
