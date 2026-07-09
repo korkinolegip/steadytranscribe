@@ -45,8 +45,8 @@ class EtaBlender:
        (честно отражает застревание, но не пугает скачками).
     """
 
-    WINDOW = 25.0      # окно замера скорости, с
-    MAX_GROW = 1.5     # максимальный рост показанного «осталось» за тик, с
+    WINDOW = 20.0      # окно замера скорости, с (короче → быстрее ловим замедление)
+    MAX_GROW = 2.0     # минимальный «пол» роста «осталось» за тик, с (сверху — пропорц.)
 
     def __init__(self, est_total: float):
         self.est_total = max(est_total, 1.0)
@@ -68,11 +68,16 @@ class EtaBlender:
         if live is None:
             remaining = prior if self._shown is None else min(prior, self._shown)
         else:
-            w = min(max((progress - 0.10) / 0.45, 0.0), 0.95)
+            # вес живого замера растёт с прогрессом и раньше выходит на максимум,
+            # чтобы реальная (замедлившаяся) скорость учитывалась быстрее
+            w = min(max((progress - 0.05) / 0.35, 0.0), 0.95)
             remaining = (1.0 - w) * prior + w * live
-        if self._shown is not None:
-            # естественный ход — минус секунда за тик; рост сдерживаем
-            remaining = min(remaining, self._shown - 1.0 + 1.0 + self.MAX_GROW)
+        if self._shown is not None and remaining > self._shown:
+            # вниз цифра идёт свободно; вверх — сдержанно, но РЕАГИРУЕМ на замедление:
+            # не быстрее чем на ~треть разрыва за тик (плюс пол MAX_GROW), иначе
+            # «осталось» застревало заниженным, когда машина реально замедлилась
+            cap = max(self.MAX_GROW, 0.30 * (remaining - self._shown))
+            remaining = min(remaining, self._shown + cap)
         self._shown = max(remaining, 0.0)
         return max(remaining, 1.0)
 

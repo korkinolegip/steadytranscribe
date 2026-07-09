@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ..storage.settings import app_data_dir
 
-CURRENT_VERSION = "1.5.38"
+CURRENT_VERSION = "1.5.39"
 REPO = "korkinolegip/steadytranscribe"
 RELEASES_PAGE = f"https://github.com/{REPO}/releases/latest"
 

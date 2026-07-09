@@ -70,14 +70,19 @@ def _record(key: str, audio_seconds: float, processing_seconds: float) -> None:
 
 
 def _factor(key: str, default: float) -> float:
-    """Смешиваем теоретическую оценку с медианой реальных замеров.
-    Чем больше замеров — тем сильнее доверяем факту."""
+    """Смешиваем теоретическую оценку с КОНСЕРВАТИВНОЙ оценкой реальных замеров.
+    Чем больше замеров — тем сильнее доверяем факту.
+
+    Берём max(медиана, среднее) с запасом 10%: медиана показывает типичную
+    скорость, но игнорирует «тяжёлый хвост» медленных прогонов (загруженная
+    машина, тепловой троттлинг) — а среднее его учитывает. Цель — скорее
+    ПЕРЕоценить, чем ПОДоценить (лучше «управился раньше», чем «обещал меньше»)."""
     samples = _load().get(key, [])
     if not samples:
         return default
-    med = _median(samples)
     n = len(samples)
-    return (default * _PRIOR_WEIGHT + med * n) / (_PRIOR_WEIGHT + n)
+    base = max(_median(samples), sum(samples) / n) * 1.10
+    return (default * _PRIOR_WEIGHT + base * n) / (_PRIOR_WEIGHT + n)
 
 
 # ---------- расшифровка ----------
